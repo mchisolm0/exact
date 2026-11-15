@@ -1,0 +1,13 @@
+{
+  "kind": "implementation",
+  "implements": "@exact/clipboard@^1.0",
+  "platform": "linux",
+  "targets": ["linux"],
+  "options": {},
+  "names": [],
+  "views": [],
+  "hatches": [],
+  "sources": { "rust": ["lib.rs"] },
+  "artifacts": [],
+  "class": "Clipboard"
+}

@@ -1,0 +1,112 @@
+//! @exact/global-shortcuts on Linux (LLP 1133.025 D3): a chord registered
+//! system-wide while something reads it, through the host's hot-key table,
+//! which on Linux is the desktop's GlobalShortcuts portal
+//! (`exact_painted::portal::shortcuts`, GNOME 48 and later, KDE Plasma).
+//! The desktop asks the person the first time, in its own dialog, so a
+//! registration answers `registered` while it asks; the session's watch
+//! asks again once the desktop answers, and wakes the loop for a press,
+//! which the host raises as a person's activation. Under the agent the
+//! runner's substitute answers, unless the drive binds it.
+
+use exact_painted::package::{json, Context, Json, Package, Reply};
+
+pub struct GlobalShortcuts {
+    context: Context,
+    /// The chords this session reads: `(id, keys)`.
+    reading: Vec<(String, String)>,
+    /// Whether the host asks this session's readings again on its answers.
+    watching: bool,
+}
+
+impl GlobalShortcuts {
+    fn answer(keys: &str, outcome: Result<(), &str>) -> Json {
+        match outcome {
+            Ok(()) => json!({ "keys": keys, "registered": true, "reason": null }),
+            Err(reason) => json!({ "keys": keys, "registered": false, "reason": reason }),
+        }
+    }
+}
+
+impl Package for GlobalShortcuts {
+    fn new(context: Context) -> Self {
+        GlobalShortcuts {
+            context,
+            reading: Vec::new(),
+            watching: false,
+        }
+    }
+
+    fn later(&mut self, name: &str, args: &Json, _preferred: Option<&Json>, reply: Reply) {
+        let Some(host) = self.context.desktop() else {
+            return reply.error("NotSupportedError", None);
+        };
+        let keys = args["keys"].as_str().unwrap_or_default();
+        match name {
+            "globalShortcut" => {
+                let id = args["id"].as_str().unwrap_or_default();
+                let session = self.context.session().to_owned();
+                if !self.watching {
+                    let (notifier, topic) = (
+                        self.context.notifier(),
+                        format!("{}.{name}", self.context.extension()),
+                    );
+                    host.watch_reserved(&session, Box::new(move || notifier.changed(&topic)));
+                    self.watching = true;
+                }
+                let outcome = host.register_hotkey(
+                    &session,
+                    id,
+                    keys,
+                    false,
+                    self.context.extension(),
+                    "globalshortcut",
+                );
+                let reading = (id.to_owned(), keys.to_owned());
+                if outcome.is_err() {
+                    self.reading.retain(|r| r != &reading);
+                } else if !self.reading.contains(&reading) {
+                    self.reading.push(reading);
+                }
+                let registered = match outcome {
+                    Ok(()) => "registered".to_owned(),
+                    Err(reason) => format!("not registered ({reason})"),
+                };
+                self.context.log(format!("{keys} for {id}: {registered}"));
+                let mut answer = Self::answer(keys, outcome);
+                answer["id"] = json!(id);
+                reply.send(answer);
+            }
+            "checkGlobalShortcut" => reply.send(Self::answer(keys, host.check_hotkey(keys))),
+            "globalShortcutStatus" => reply.send(json!({ "available": true })),
+            _ => reply.error("NotSupportedError", None),
+        }
+    }
+
+    fn call(&mut self, name: &str, _args: &Json) -> Json {
+        match (name, self.context.desktop()) {
+            ("globalShortcutStatusSync", Some(_)) => json!({ "available": true }),
+            _ => json!({ "error": "NotSupportedError" }),
+        }
+    }
+
+    fn release(&mut self, name: &str, args: Option<&Json>) {
+        let Some(host) = self.context.desktop().filter(|_| name == "globalShortcut") else {
+            return;
+        };
+        let session = self.context.session().to_owned();
+        self.reading.retain(|(id, keys)| {
+            let gone = args.is_none_or(|a| a["id"] == id.as_str() && a["keys"] == keys.as_str());
+            if gone {
+                host.unregister_hotkey(&session, id, keys);
+            }
+            !gone
+        });
+    }
+
+    fn destroy(&mut self) {
+        self.release("globalShortcut", None);
+        if let Some(host) = self.context.desktop().filter(|_| self.watching) {
+            host.unwatch_reserved(self.context.session());
+        }
+    }
+}
