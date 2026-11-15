@@ -269,6 +269,7 @@ impl<D: DataSource> Host<D> {
         // An `app:/data` image shows from the first frame, before storage
         // is configured and whether or not anything was picked (D7).
         crate::picker::know_roots(data.app_id());
+        crate::desktop::know_app(data.app_id());
         // A named drive's secrets, read before the runner takes the source.
         // A carried reload keeps its memory store and does not touch the files.
         let (mut store_snapshot, unread_kept) = store_read(data.app_id(), carried.is_some());

@@ -309,6 +309,8 @@ pub(crate) fn socket_of(address: &str) -> Option<Socket> {
 
 #[cfg(unix)]
 mod bus;
+#[cfg(any(target_os = "linux", all(test, unix)))]
+pub(crate) mod shortcuts;
 #[cfg(unix)]
 pub(crate) use bus::choose;
 

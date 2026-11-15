@@ -230,3 +230,14 @@ The [Windows formats documentation](https://learn.microsoft.com/windows/win32/da
 describes synthesized bitmap formats. [Chromium's clipboard writer](https://chromium.googlesource.com/chromium/src/+/main/ui/base/clipboard/clipboard_win.cc)
 offers PNG first for consumers including Word. Neither establishes the
 installed consumers' results; record the checks above before landing.
+
+## Linux, the desktop's clipboard
+
+The implementation hands the bytes to `wl-copy` (Wayland) or `xclip` (X11 only), which stays behind to
+serve them. Its checks run in the Linux host's tests (`cargo test -p exact-linux clipboard_package`);
+`live_wl_copy_serves_the_png_and_text` (ignored) writes to the clipboard of WAYLAND_DISPLAY, so run it only
+in a session of its own.
+
+1. Press **png**, then paste into an image editor: an 8 × 8 red image.
+2. Press **both**: the image arrives, not the text (each tool offers one type).
+3. Press **text**, then paste into a text editor: "Copied from the fixture".

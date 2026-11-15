@@ -31,7 +31,7 @@
       "origin": "app",
       "sequence": "write",
       "substitute": {
-        "unsupported": ["android", "linux", "tvos"]
+        "unsupported": ["android", "tvos"]
       }
     },
     {
@@ -48,7 +48,7 @@
       "origin": "app",
       "sequence": "write",
       "substitute": {
-        "unsupported": ["android", "linux", "tvos"]
+        "unsupported": ["android", "tvos"]
       }
     }
   ]

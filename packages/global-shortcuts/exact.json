@@ -40,7 +40,7 @@
           "key": "id",
           "tap": { "event": "globalshortcut", "keep": true, "args": ["id", { "id": "id", "keys": "keys" }] }
         },
-        "unsupported": ["web", "linux", "ios", "android", "tvos", "terminal"]
+        "unsupported": ["web", "ios", "android", "tvos", "terminal"]
       }
     },
     {
@@ -51,7 +51,7 @@
       "answers": "GlobalShortcutCheck",
       "substitute": {
         "shortcut": "check",
-        "unsupported": ["web", "linux", "ios", "android", "tvos", "terminal"]
+        "unsupported": ["web", "ios", "android", "tvos", "terminal"]
       }
     },
     {
@@ -61,7 +61,7 @@
       "sync": { "name": "globalShortcutStatusSync", "from": "read" },
       "substitute": {
         "default": { "available": true },
-        "unsupported": ["web", "linux", "ios", "android", "tvos", "terminal"]
+        "unsupported": ["web", "ios", "android", "tvos", "terminal"]
       }
     },
     { "event": "globalshortcut", "on": "root", "raised": "activation", "args": ["string", "GlobalShortcutEvent"], "hold": 16 }
