@@ -480,9 +480,17 @@ impl<D: DataSource> Host<D> {
             // canvases that asked (LLP 1056 D9).
             let asked = self.runner.take_canvas_image_requests();
             for src in &asked {
-                let decoded = assets
-                    .read(src)
-                    .ok_or_else(|| format!("{src} is not an asset"))
+                // An `app:/` handle is a file the app wrote, read as an `image` node reads it.
+                let bytes = if src.starts_with("app:/") {
+                    crate::picker::open(src).and_then(|mut f| {
+                        let mut bytes = Vec::new();
+                        std::io::Read::read_to_end(&mut f, &mut bytes).ok().map(|_| bytes)
+                    })
+                } else {
+                    assets.read(src).map(|b| b.to_vec())
+                };
+                let decoded = bytes
+                    .ok_or_else(|| format!("{src} is not an asset or an app file"))
                     .and_then(|bytes| {
                         tiny_skia::Pixmap::decode_png(&bytes)
                             .map_err(|e| format!("{src} does not decode: {e}"))
