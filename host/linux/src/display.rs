@@ -1,5 +1,6 @@
-//! The display: DRM/KMS with two dumb buffers and a page flip per frame,
-//! and the frame loop that owns the process when there is a screen.
+//! The display: a desktop window when there is a desktop session (`window`),
+//! else DRM/KMS with two dumb buffers and a page flip per frame, and the frame
+//! loop that owns the process when there is a screen.
 //!
 //! @ref LLP 1015 §6; LLP 1009 D5 as LLP 1015 §7 amends it (the GPU painter
 //! compiles its shaders on the first launch on a machine and reads them
@@ -36,6 +37,7 @@ use tiny_skia::Pixmap;
 mod clock_set;
 mod flip;
 mod pointer;
+mod window;
 use flip::FlipState;
 #[cfg(test)]
 mod tests;
@@ -252,6 +254,9 @@ pub fn copy_xrgb(frame: &Pixmap, dst: &mut [u8], pitch: usize, width: u32, heigh
 /// The display loop: paint when something changed, present, wait for input
 /// or the next timer or motion frame, repeat. Exit code.
 pub fn run<D: DataSource + Default>(config: &mut Config, started: Instant) -> i32 {
+    if window::wanted() {
+        return window::run::<D>(config, started);
+    }
     let mut display = match Display::open(&config.card) {
         Ok(d) => d,
         Err(e) => {
@@ -272,26 +277,9 @@ pub fn run<D: DataSource + Default>(config: &mut Config, started: Instant) -> i3
         },
     ));
     let wall = || started.elapsed().as_secs_f64() * 1000.0;
-    config.clock_started = Some(started);
-    // Startup timestamps for Observe's launch metrics.
-    let mut marks = exact_painted::launch_marks::LaunchMarks::new();
-    marks.launch_end();
-    // The page is presented at its first picture's present, not its first commit (LLP 1069.000 D2).
-    exact_runner::page::set_awaits_present(true);
-    let (mut p, error) = match exact_painted::app::boot_presenter::<D>(config, viewport) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("exact: boot: {e}");
-            return 1;
-        }
+    let Some((mut p, marks)) = boot::<D>(config, started, viewport) else {
+        return 1;
     };
-    if let Some(e) = error {
-        eprintln!("exact: {e}");
-    }
-    // The display's clock owns time (the timers RFC, D1), and a commit's
-    // motion starts at the flip that shows it (LLP 1003.001 D9).
-    p.presents_pictures(true);
-    p.set_live_clock(Some(exact_painted::presenter::wall_since(started)));
     let input = Input::open();
     let clock_set = clock_set::ClockSet::open();
     // @ref LLP 1132 D10 — a touch screen alone is `pointer: coarse`, `hover: none`.
@@ -315,9 +303,6 @@ pub fn run<D: DataSource + Default>(config: &mut Config, started: Instant) -> i3
     };
     let pointer = (viewport.0 / 2.0, viewport.1 / 2.0);
     p.set_pointer(Some(pointer));
-    if !exact_runner::delivery::production(p.compat()) {
-        trace_on_signal();
-    }
     println!(
         "exact: {pw}x{ph} @{}Hz on {}, scale {}, {} input device(s){}, boot {:.1} ms",
         display.refresh(),
@@ -349,6 +334,38 @@ pub fn run<D: DataSource + Default>(config: &mut Config, started: Instant) -> i3
         marks,
         D::default,
     )
+}
+
+/// Boot the presenter for a display of `viewport` points, on the display's
+/// clock (the timers RFC, D1), with the launch marks Observe reads. `None`
+/// when the boot failed, which it has said.
+fn boot<D: DataSource + Default>(
+    config: &mut Config,
+    started: Instant,
+    viewport: (f32, f32),
+) -> Option<(Presenter<D>, exact_painted::launch_marks::LaunchMarks)> {
+    config.clock_started = Some(started);
+    let mut marks = exact_painted::launch_marks::LaunchMarks::new();
+    marks.launch_end();
+    // The page is presented at its first picture's present, not its first commit (LLP 1069.000 D2).
+    exact_runner::page::set_awaits_present(true);
+    let (mut p, error) = match exact_painted::app::boot_presenter::<D>(config, viewport) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("exact: boot: {e}");
+            return None;
+        }
+    };
+    if let Some(e) = error {
+        eprintln!("exact: {e}");
+    }
+    // A commit's motion starts at the present that shows it (LLP 1003.001 D9).
+    p.presents_pictures(true);
+    p.set_live_clock(Some(exact_painted::presenter::wall_since(started)));
+    if !exact_runner::delivery::production(p.compat()) {
+        trace_on_signal();
+    }
+    Some((p, marks))
 }
 
 static TRACE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
