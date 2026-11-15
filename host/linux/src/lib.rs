@@ -172,3 +172,16 @@ mod tests {
 
 #[cfg(test)]
 mod executor_tests;
+
+// @exact/clipboard's Linux implementation, as the app's build composes it,
+// with its checks (the Windows host includes its own the same way). Only
+// the checks use it here, so the package's entry points look unused.
+#[cfg(test)]
+#[allow(dead_code)]
+mod clipboard_package {
+    include!("../../../packages/clipboard/linux/lib.rs");
+
+    mod tests {
+        include!("../../../packages/clipboard/test/linux.rs");
+    }
+}

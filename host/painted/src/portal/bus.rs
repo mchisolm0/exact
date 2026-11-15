@@ -89,6 +89,13 @@ impl Bus {
         Ok(bus)
     }
 
+    /// A handle on the socket, which another thread shuts down to end a
+    /// wait for a signal.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) fn closer(&self) -> Option<UnixStream> {
+        self.stream.try_clone().ok()
+    }
+
     /// Wait without limit: the person's own time at the chooser.
     pub(crate) fn wait_forever(&mut self) {
         let _ = self.stream.set_read_timeout(None);

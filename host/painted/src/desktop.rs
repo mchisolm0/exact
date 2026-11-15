@@ -5,8 +5,10 @@
 //! calling session.
 //!
 //! A host that has these installs its [`Services`] before the loop starts
-//! (the Windows host, `host/windows/src/desktop.rs`); this Linux host binds
-//! none (LLP 1133.025 D14), so [`services`] is `None` and the packages
+//! (the Windows host, `host/windows/src/desktop.rs`). On Linux the first
+//! read makes the desktop portal's hot-key table (`portal/shortcuts.rs`),
+//! which keeps hot keys only: attention and the login item answer that
+//! they are not kept. Elsewhere [`services`] is `None` and the packages
 //! answer `NotSupportedError`.
 //!
 //! A hot key's press is an activation the host raises (D11 item 3): the
@@ -86,6 +88,17 @@ thread_local! {
     static ACTIVATIONS: RefCell<Vec<Activation>> = const { RefCell::new(Vec::new()) };
 }
 
+/// Presses heard off the loop's thread (the Linux portal's reader).
+static FAR: std::sync::Mutex<Vec<Activation>> = std::sync::Mutex::new(Vec::new());
+
+/// The app's id, which the Linux desktop keeps a portal's answers by.
+static APP_ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// The running app's id, told by the host at boot.
+pub(crate) fn know_app(id: &str) {
+    let _ = APP_ID.set(id.to_owned());
+}
+
 /// The host's services, from now on, for every session on this thread.
 pub fn install(services: Rc<dyn Services>) {
     SERVICES.with(|s| *s.borrow_mut() = Some(services));
@@ -93,7 +106,14 @@ pub fn install(services: Rc<dyn Services>) {
 
 /// The host's services, or `None` where the host keeps none.
 pub fn services() -> Option<Rc<dyn Services>> {
-    SERVICES.with(|s| s.borrow().clone())
+    SERVICES.with(|s| {
+        #[cfg(target_os = "linux")]
+        if s.borrow().is_none() {
+            let app_id = APP_ID.get().cloned().unwrap_or_default();
+            *s.borrow_mut() = Some(Rc::new(crate::portal::shortcuts::Shortcuts::new(app_id)));
+        }
+        s.borrow().clone()
+    })
 }
 
 /// The host's platform callback heard a person's act for `extension`'s
@@ -109,9 +129,30 @@ pub fn activate(extension: &'static str, event: &'static str, args: String) {
     });
 }
 
+/// [`activate`] from any thread, for a platform that reports presses on
+/// one of its own: raised on the loop's next turn. The caller wakes the
+/// loop after.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn activate_from_any_thread(extension: &'static str, event: &'static str, args: String) {
+    let heard = Activation {
+        extension,
+        event,
+        args,
+    };
+    FAR.lock().unwrap_or_else(|e| e.into_inner()).push(heard);
+}
+
+/// The presses waiting from other threads, taken: their arguments.
+#[cfg(test)]
+pub(crate) fn take_far() -> Vec<String> {
+    let far = std::mem::take(&mut *FAR.lock().unwrap_or_else(|e| e.into_inner()));
+    far.into_iter().map(|a| a.args).collect()
+}
+
 /// The activations heard since the last turn, raised on `runner`.
 pub(crate) fn raise<D: exact_runner::DataSource>(runner: &mut exact_runner::Runner<D>) {
-    let heard = ACTIVATIONS.with(|a| std::mem::take(&mut *a.borrow_mut()));
+    let mut heard = ACTIVATIONS.with(|a| std::mem::take(&mut *a.borrow_mut()));
+    heard.append(&mut FAR.lock().unwrap_or_else(|e| e.into_inner()));
     for a in heard {
         let origin = exact_runner::CallOrigin::App;
         if let Err(e) = runner.raise_module_event(a.extension, a.event, &a.args, origin) {
