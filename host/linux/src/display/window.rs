@@ -20,7 +20,8 @@
 //! at the next pump.
 //!
 //! The window opens at `EXACT_SIZE` (points), else 1024×720, the Windows
-//! host's default; its title is the binary's app name.
+//! host's default; its title is the binary's app name, and its Wayland app
+//! id and X11 class are the app's id, which name its desktop entry.
 
 use super::event_loop::{self, Output};
 use crate::input::LINE;
@@ -57,12 +58,14 @@ pub(super) fn wanted() -> bool {
 /// display loop over it. Exit code.
 pub(super) fn run<D: DataSource + Default>(config: &mut Config, started: Instant) -> i32 {
     let name = exact_painted::frames::app_name();
+    let id = D::default().app_id().to_owned();
     let size = if std::env::var_os("EXACT_SIZE").is_some() {
         config.size
     } else {
         (1024., 720.)
     };
-    let mut surface = match Surface::open(&name, size) {
+    let class = if id.is_empty() { &name } else { &id };
+    let mut surface = match Surface::open(&name, class, size) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("exact: no window: {e}");
@@ -158,15 +161,15 @@ struct Surface {
 }
 
 impl Surface {
-    fn open(title: &str, (width, height): (f32, f32)) -> Result<Surface, String> {
+    fn open(title: &str, class: &str, (width, height): (f32, f32)) -> Result<Surface, String> {
         let mut event_loop = EventLoop::new().map_err(|e| e.to_string())?;
         let attributes = Window::default_attributes()
             .with_title(title)
             .with_inner_size(LogicalSize::new(width, height));
         // The Wayland app id and the X11 WM_CLASS, which docks match to a
-        // desktop file.
-        let attributes = WindowAttributesExtWayland::with_name(attributes, title, title);
-        let attributes = WindowAttributesExtX11::with_name(attributes, title, title);
+        // desktop file: `<app id>.desktop`, as the build writes it.
+        let attributes = WindowAttributesExtWayland::with_name(attributes, class, title);
+        let attributes = WindowAttributesExtX11::with_name(attributes, class, title);
         let mut handler = Handler {
             attributes: Some(attributes),
             ..Default::default()
