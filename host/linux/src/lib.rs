@@ -3,13 +3,15 @@
 //! @ref LLP 1015 (Linux host v1)
 //!
 //! The painted host (`exact-painted`) lays the kernel tree out and paints
-//! it; this crate shows it on Linux. The pixels go to DRM/KMS dumb buffers
-//! with evdev input, or into a buffer with no display at all, which is how
+//! it; this crate shows it on Linux. The pixels go to a Wayland or X11
+//! window when there is a desktop session, else to DRM/KMS dumb buffers with
+//! evdev input, or into a buffer with no display at all, which is how
 //! the host is tested: the agent API (LLP 1012) over stdio, a screenshot, a
 //! smoke run — on a fleet Linux box with no GPU, or on macOS in the
 //! seconds-loop.
 //!
-//! - [`display`] — KMS dumb buffers and the loop that presents into them.
+//! - [`display`]: a desktop window or KMS dumb buffers, and the loop that
+//!   presents into them.
 //! - [`input`] — evdev: keyboards, pointers, touch and gamepads.
 //! - [`vnc`] — the screen over RFB, with a client's pointer and keys as input.
 //! - [`run`] and its kin — the entry: the environment, headless or display.

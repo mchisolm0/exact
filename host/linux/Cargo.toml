@@ -1,7 +1,8 @@
-# The Linux host: the painted host (`exact-painted`) on DRM/KMS dumb buffers
-# with evdev input, the screen served over VNC, or headless. Pure Rust end
-# to end: no system library is linked, so it builds on any Linux (and on
-# macOS, headless, for the seconds-loop).
+# The Linux host: the painted host (`exact-painted`) in a Wayland or X11
+# window, on DRM/KMS dumb buffers with evdev input, the screen served over
+# VNC, or headless. Pure Rust end to end: no system library is linked, so it
+# builds on any Linux (and on macOS, headless, for the seconds-loop). A
+# window opens libwayland-client, libxkbcommon and libxcb at run time.
 #
 # @ref LLP 1015 (this host)
 [package]
@@ -9,7 +10,7 @@ name = "exact-linux"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Linux host: the painted host on DRM/KMS with evdev input, over VNC, or headless"
+description = "Linux host: the painted host in a Wayland/X11 window, on DRM/KMS with evdev input, over VNC, or headless"
 publish = false
 
 [lib]
@@ -27,6 +28,11 @@ des = "0.8"
 getrandom = "0.3"
 drm = "0.15"
 evdev = "0.13"
+# The desktop window (`display/window.rs`), the pair the Windows host uses.
+# winit's default features are Wayland, X11 and client-side decorations, each
+# library loaded with dlopen; softbuffer's add KMS, which this host does itself.
+winit = "0.30"
+softbuffer = { version = "0.4", default-features = false, features = ["wayland", "wayland-dlopen", "x11", "x11-dlopen"] }
 
 [dev-dependencies]
 exact-logic = { path = "../../logic" }

@@ -31,6 +31,11 @@ pub(crate) trait Events<D: DataSource> {
     fn turn(&mut self, p: &mut Presenter<D>, wall: impl Fn() -> f64);
     fn date_jumped(&self) -> bool;
     fn trace_requested(&self) -> bool;
+    /// The person closed the app (a window's close button): the loop ends
+    /// with exit code 0.
+    fn closed(&self) -> bool {
+        false
+    }
 }
 
 type ReloadStamp = Vec<(std::path::PathBuf, SystemTime, u64)>;
@@ -229,6 +234,9 @@ pub(crate) fn run<D: DataSource>(
             p.check_update();
         }
         events.turn(&mut p, wall);
+        if events.closed() {
+            return 0;
+        }
 
         if let Some(e) = p.admit_idle_timer(wall()) {
             eprintln!("exact: {e}");
