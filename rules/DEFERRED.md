@@ -824,10 +824,13 @@ names no take; `:focus-within` remains out.
   runs when an update arrives (the system replaces the activity's state and
   the extension redraws it). Consumer: Interview's AI answer being written,
   which only its server can advance. Unblocks a Live Activity that stays true
-  while its app is suspended. Still refused: push-to-start, remote
-  notifications (a visible push admitted 2026-11-11, below; a data-only push
-  stays refused), and everything the click ruling left refused. Take: none
-  named; the ruling stands as its own waiver.
+  while its app is suspended. Push-to-start is now admitted through the
+  ActivityKit arm's `pushToStartToken` resource field; the app must upload the
+  rotating token to its own backend, which sends ActivityKit start pushes.
+  Remote notifications (a visible push admitted 2026-11-11, below; a data-only
+  push stays refused) and everything the click ruling left refused. Take:
+  push-to-start token observation and server delivery; the remaining ruling
+  stands as its own waiver.
   **Expanded (Charlie, 2026-10-18, "recs work, go for it", on LLP 1133.002
   §12 question 6):** a readable permission fact for geolocation,
   `geolocationStatus()` (`granted`, `denied`, `prompt`, and its accuracy),
@@ -870,7 +873,8 @@ names no take; `:focus-within` remains out.
   Notifications, and a production build (`packages/push/test/checklist.md`);
   nothing is claimed for a device until that run. Not built: push on macOS (the
   row is omitted there), on Android (after local notifications), and on the web
-  (Declarative Web Push or a host worker). Still refused: push-to-start; a
+  (Declarative Web Push or a host worker). Push-to-start is admitted for native
+  ActivityKit activities; a
   data-only push as a wake's trigger (`content-available`, the
   `remote-notification` background mode); a notification service extension; an
   event raised by a push, but for a declared action the person chose (below).
