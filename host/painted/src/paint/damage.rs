@@ -62,6 +62,12 @@ impl Changes {
             self.keys.clear();
         }
     }
+    /// A node whose pixels changed outside a commit: a canvas's new drawing.
+    pub fn node(&mut self, key: NodeKey) {
+        if !self.full {
+            self.keys.insert(key);
+        }
+    }
     pub fn layout(&mut self, r: &LayoutReceipt) {
         if self.full {
             return;

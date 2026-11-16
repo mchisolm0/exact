@@ -394,3 +394,29 @@ fn a_rejected_capture_draw_preserves_the_file_and_stops_framing() {
     assert_eq!(std::fs::read(path).unwrap(), b"keep");
     cleanup(&mut p);
 }
+#[test]
+fn a_canvas_whose_arguments_alone_change_is_painted_again() {
+    // The press moves no node: only the canvas's argument changes, as a drag's
+    // end point does while a mark is drawn.
+    const RECOLOR: &str = r#"component App
+  state shade = 40
+  action recolor
+    shade = 41
+  view
+    column
+      canvas surface=ink(shade) width=40 height=40
+      button press=recolor testId="recolor"
+        text "Recolor"
+"#;
+    let mut p = boot_source("recolor", RECOLOR);
+    let frame = p.display_frame().unwrap();
+    assert_eq!(frame.pixels().pixel(20, 20).unwrap().red(), 255);
+    assert!(p.display_complete(&frame));
+    assert!(!p.dirty());
+    press(&mut p, "recolor");
+    assert!(p.dirty(), "the canvas owes a drawing");
+    let frame = p.display_frame().unwrap();
+    let px = frame.pixels().pixel(20, 20).unwrap();
+    assert_eq!((px.red(), px.blue()), (0, 255), "the new drawing is shown");
+    cleanup(&mut p);
+}

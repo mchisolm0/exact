@@ -511,6 +511,13 @@ impl<D: DataSource> Host<D> {
         }
         let lists = self.runner.take_canvas_lists();
         let changed = !lists.is_empty();
+        // A canvas drawn again is damage, as a touched node is: a partial
+        // paint repaints its box.
+        for l in &lists {
+            if let Some(node) = self.runner.kernel().node(l.view) {
+                self.flow_damage.node(node.key);
+            }
+        }
         for e in self.canvas2d.apply(lists) {
             self.runner.log(e);
         }
