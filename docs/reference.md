@@ -578,6 +578,14 @@ an app that keeps running gives the person a way back and a way out of its
 own: a global shortcut whose action calls `focus()`, and a button whose
 action calls `close()`.
 
+A Linux app keeps running the same way with `"keepRunning": true` in
+`host.linux.window`: the window's close puts it away (the window is
+destroyed, since Wayland has no hidden window) and the session runs on,
+global shortcuts with it. Such an app is one process: launching it again
+(the app grid, its desktop file) shows the window at its last size and
+raises it with the launch's activation token, and the new process exits.
+A bare `focus()` shows it too, and `hideWindow()` puts it away.
+
 A native module whose work must finish before the app exits (a child process
 to stop, a socket to flush) overrides `willQuit(done:)`. On every orderly
 quit (⌘Q, the app menu, an Apple Event, SIGTERM, the last window closing),

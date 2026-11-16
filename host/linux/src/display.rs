@@ -36,6 +36,7 @@ use tiny_skia::Pixmap;
 
 mod clock_set;
 mod flip;
+mod instance;
 mod pointer;
 mod window;
 use flip::FlipState;
@@ -236,9 +237,14 @@ pub fn copy_xrgb(frame: &Pixmap, dst: &mut [u8], pitch: usize, width: u32, heigh
 
 /// The display loop: paint when something changed, present, wait for input
 /// or the next timer or motion frame, repeat. Exit code.
-pub fn run<D: DataSource + Default>(config: &mut Config, started: Instant) -> i32 {
+/// `window` is the desktop window's, when there is a desktop session.
+pub fn run<D: DataSource + Default>(
+    config: &mut Config,
+    started: Instant,
+    window: crate::Window,
+) -> i32 {
     if window::wanted() {
-        return window::run::<D>(config, started);
+        return window::run::<D>(config, started, window);
     }
     let mut display = match Display::open(&config.card) {
         Ok(d) => d,

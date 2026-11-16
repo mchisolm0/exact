@@ -24,6 +24,10 @@ pub mod display;
 #[cfg(all(test, unix, not(target_os = "linux")))]
 #[path = "display/flip.rs"]
 mod display_flip;
+#[cfg(all(test, unix, not(target_os = "linux")))]
+#[path = "display/instance.rs"]
+#[allow(dead_code)]
+mod display_instance;
 #[cfg(any(target_os = "linux", all(test, unix)))]
 #[path = "display/event_loop.rs"]
 mod event_loop;
@@ -79,7 +83,26 @@ pub fn run_composed<D: DataSource + Default>(
     compat: &str,
     composed: Composed,
 ) -> i32 {
-    run_composed_with::<D>(baked, compat, None, composed)
+    run_window::<D>(Window::default(), baked, compat, composed)
+}
+
+/// The desktop window the app opens in, as `host.linux.window` gives it.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Window {
+    /// The person's close puts the window away and the app keeps running;
+    /// a later launch or a bare `focus()` shows it again
+    /// (`host.linux.window.keepRunning`).
+    pub keep_running: bool,
+}
+
+/// [`run_composed`] in the window `app.json` describes.
+pub fn run_window<D: DataSource + Default>(
+    window: Window,
+    baked: &[u8],
+    compat: &str,
+    composed: Composed,
+) -> i32 {
+    run_composed_with::<D>(baked, compat, None, composed, window)
 }
 
 /// Launch an explicitly registered consumer using the ordinary environment,
@@ -89,7 +112,13 @@ pub fn run_with_content_region<D: DataSource + Default>(
     compat: &str,
     region: ContentRegionRegistration,
 ) -> i32 {
-    run_composed_with::<D>(baked, compat, Some(region), Composed::default())
+    run_composed_with::<D>(
+        baked,
+        compat,
+        Some(region),
+        Composed::default(),
+        Window::default(),
+    )
 }
 
 fn run_composed_with<D: DataSource + Default>(
@@ -97,6 +126,7 @@ fn run_composed_with<D: DataSource + Default>(
     compat: &str,
     region: Option<ContentRegionRegistration>,
     composed: Composed,
+    window: Window,
 ) -> i32 {
     row_reuse_from_env(false);
     if print_baked_receipt(compat) {
@@ -117,11 +147,19 @@ fn run_composed_with<D: DataSource + Default>(
     config.content_region = region;
     config.hatches = composed.hatches;
     config.packages = composed.packages;
-    run_config::<D>(&mut config, started)
+    run_config_in::<D>(&mut config, started, window)
 }
 
 /// Run a configured app, optionally composed with a delivery adapter.
 pub fn run_config<D: DataSource + Default>(config: &mut Config, started: Instant) -> i32 {
+    run_config_in::<D>(config, started, Window::default())
+}
+
+fn run_config_in<D: DataSource + Default>(
+    config: &mut Config,
+    started: Instant,
+    window: Window,
+) -> i32 {
     if let Err(why) = exact_runner::delivery::refuse_analysis(&config.compat) {
         eprintln!("exact: {why}");
         return 1;
@@ -132,10 +170,11 @@ pub fn run_config<D: DataSource + Default>(config: &mut Config, started: Instant
     }
     #[cfg(target_os = "linux")]
     {
-        display::run::<D>(config, started)
+        display::run::<D>(config, started, window)
     }
     #[cfg(not(target_os = "linux"))]
     {
+        let _ = window;
         1
     }
 }

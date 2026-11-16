@@ -1079,12 +1079,19 @@
           "additionalProperties": false
         },
         "linux": {
-          "description": "Linux: the painter.",
+          "description": "Linux: the painter and the desktop `window`.",
           "type": "object",
           "properties": {
             "painter": {
               "enum": ["ink"],
               "description": "Opt into ink (LLP 1149 D12); absent: the GPU painter when available, otherwise the CPU, with `EXACT_PAINTER` overriding the choice."
+            },
+            "window": {
+              "type": "object",
+              "properties": {
+                "keepRunning": { "type": "boolean", "description": "Closing the window puts it away, and the app keeps running, its session, timers and global shortcuts alive; launching the app again (the app grid, its desktop file) or a bare `focus()` shows it, `hideWindow()` puts it away. The app is then one process: a later launch hands its activation token to the running one and exits. Absent: closing the window ends the app." }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false

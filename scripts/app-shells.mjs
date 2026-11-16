@@ -372,7 +372,8 @@ include!(concat!(env!("OUT_DIR"), "/packages.rs"));
 include!(concat!(env!("OUT_DIR"), "/hatches.rs"));
 fn main() {
     let composed = exact_painted::Composed { hatches: exact_hatches(), packages: exact_packages() };
-    std::process::exit(exact_linux::run_composed::<AppData>(PLAN, COMPAT, composed));
+    let window = exact_linux::Window { keep_running: KEEP_RUNNING };
+    std::process::exit(exact_linux::run_window::<AppData>(window, PLAN, COMPAT, composed));
 }
 `,
   };
