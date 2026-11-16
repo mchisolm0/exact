@@ -38,9 +38,29 @@ impl NodeArena {
         } else {
             self.frag.containers.remove(slot);
         }
+        let read = self.readers.observed_edges.get(&slot).copied();
         self.readers
             .update(slot, &self.styles[slot as usize], &style);
+        // A reader that reads a new edge is measured again, its input there stale
+        let reads = self.readers.observed_edges.get(&slot).copied();
+        if reads.unwrap_or(0) & !read.unwrap_or(0) != 0 {
+            self.observations.remeasure(slot);
+        }
+        if read.is_some() && reads.is_none() {
+            self.observations.stopped_reading(slot);
+        }
+        // A box that starts or stops scrolling changes what its content observes
+        let old = &self.styles[slot as usize];
+        let overflow = |s: &StyleProps| {
+            let declared = s.mask.has(crate::generated::StyleId::OverflowY);
+            (s.overflow_x, s.overflow_y, declared)
+        };
+        let scrolled = (overflow(old) != overflow(&style))
+            .then(|| crate::kernel::observe::scroll_view(self, slot));
         self.styles[slot as usize] = style;
+        if scrolled.is_some_and(|was| was != crate::kernel::observe::scroll_view(self, slot)) {
+            self.observations.invalidate();
+        }
         self.refresh_sticky(slot);
     }
 

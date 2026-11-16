@@ -106,6 +106,11 @@ impl Blocks {
         self.held(slot).map(|b| b.block)
     }
 
+    /// The block `slot`'s host gave it: a content owner's (LLP 1123 D2).
+    pub(crate) fn given(&self, slot: u32) -> Option<HostBlock> {
+        self.held(slot).and_then(|b| b.given)
+    }
+
     /// Whether `slot` is the root of a layout of its own.
     pub(crate) fn holds(&self, slot: u32) -> bool {
         !self.0.is_empty() && self.held(slot).is_some()
@@ -357,6 +362,10 @@ impl Kernel {
             }
         }
         let before = self.arena.blocks.get(slot);
+        // A box that gains or gives back a block changes the band its readers observe
+        if self.arena.blocks.given(slot).is_some() != block.is_some() {
+            self.arena.observations.invalidate();
+        }
         self.arena.blocks.set(slot, block);
         self.block_changed(slot, before);
         Ok(())
@@ -692,7 +701,7 @@ impl Kernel {
         Ok(())
     }
 
-    fn used_size(&self, slot: u32) -> (f32, f32) {
+    pub(super) fn used_size(&self, slot: u32) -> (f32, f32) {
         let shown = !self.arena.flags(slot).has(NodeFlags::HIDDEN);
         let tree = self.layout.as_deref().and_then(LayoutMirror::tree_ref);
         let (Some(block), Some(node), Some(tree)) = (
