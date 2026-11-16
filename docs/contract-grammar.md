@@ -2961,8 +2961,9 @@ the virtual clock).
   `host.macos.activationPolicy: "accessory"` the app has no Dock tile and
   opens no window at launch. Bare `focus()` is the window's, as the web's
   `window.focus()`: on macOS and Windows it shows the session's window if
-  hidden, brings it forward and activates the app; Linux brings no window
-  forward and logs it as unsupported. `focus(id)` stays an element's.
+  hidden, brings it forward and activates the app; Linux does under
+  `host.linux.window.keepRunning`, and otherwise brings no window forward
+  and logs it as unsupported. `focus(id)` stays an element's.
   `hideWindow()` puts the session's window away as the person's close does
   under `keepRunning`, or on macOS while a status item is placed, and the
   app keeps running; the next `focus()` shows it.

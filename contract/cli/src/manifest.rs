@@ -303,6 +303,21 @@ impl Manifest {
         Ok(format!("exact_windows::Window {{ {fields}{rest}}}"))
     }
 
+    /// `host.linux.window.keepRunning`: whether closing the window puts it
+    /// away with the app still running (false when absent).
+    pub fn linux_keep_running(&self) -> Result<bool, String> {
+        match self
+            .host("linux")
+            .get("window")
+            .and_then(|w| w.get("keepRunning"))
+        {
+            None => Ok(false),
+            Some(value) => value
+                .as_bool()
+                .ok_or_else(|| "host.linux.window.keepRunning is true or false".into()),
+        }
+    }
+
     /// `deploy.signing.keys`: canonical base64 of 32 raw Ed25519 bytes.
     /// Missing keys remain absent; malformed configured keys are refused.
     pub fn keys(&self) -> Result<serde_json::Value, String> {
@@ -1005,6 +1020,26 @@ mod windows_tests {
         let wrong =
             manifest(serde_json::json!({"host": {"windows": {"window": {"keepRunning": 1}}}}));
         assert!(wrong.windows_window().unwrap_err().contains("keepRunning"));
+    }
+
+    #[test]
+    fn a_linux_window_keeps_running_only_when_app_json_says_so() {
+        let kept =
+            manifest(serde_json::json!({"host": {"linux": {"window": {"keepRunning": true}}}}));
+        assert_eq!(kept.linux_keep_running(), Ok(true));
+        for unsaid in [
+            serde_json::json!({}),
+            serde_json::json!({"host": {"linux": {"window": {}}}}),
+            serde_json::json!({"host": {"windows": {"window": {"keepRunning": true}}}}),
+        ] {
+            assert_eq!(manifest(unsaid).linux_keep_running(), Ok(false));
+        }
+        let wrong =
+            manifest(serde_json::json!({"host": {"linux": {"window": {"keepRunning": "yes"}}}}));
+        assert!(wrong
+            .linux_keep_running()
+            .unwrap_err()
+            .contains("keepRunning"));
     }
 }
 

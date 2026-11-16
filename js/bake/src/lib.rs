@@ -336,6 +336,13 @@ fn build_sources(
             manifest.windows_window()?
         ));
     }
+    // Android bakes as Linux too, and links no Linux host: a constant, not its type.
+    if platform == "linux" {
+        metadata.push_str(&format!(
+            "/// Whether closing the window keeps the app running (`host.linux.window.keepRunning`).\n#[allow(dead_code)]\npub const KEEP_RUNNING: bool = {};\n",
+            manifest.linux_keep_running()?
+        ));
+    }
     // The module's Canvas 2D roster (LLP 1056 D1), known before it loads; a
     // linked bake's is in its compat.json, as its identity is.
     if outside && platform != "web" {

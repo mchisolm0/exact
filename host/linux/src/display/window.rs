@@ -22,8 +22,18 @@
 //! The window opens at `EXACT_SIZE` (points), else 1024×720, the Windows
 //! host's default; its title is the binary's app name, and its Wayland app
 //! id and X11 class are the app's id, which name its desktop entry.
+//!
+//! An app that keeps running (`host.linux.window.keepRunning`) has its
+//! window put away by the person's close, with nothing asked, as the
+//! Windows host does: the window and its buffer are destroyed, since
+//! Wayland has no hidden toplevel, and the presenter, its hatches, packages
+//! and timers run on; the loop paints nothing while there is no window. A
+//! later launch of the app (`instance`) or a bare `focus()` makes the window
+//! again at its last size, with the launch's activation token, so the
+//! compositor raises it; `hideWindow()` puts it away.
 
 use super::event_loop::{self, Output};
+use super::instance::Claim;
 use crate::input::LINE;
 use exact_painted::app::Config;
 use exact_painted::presenter::ime::Target;
@@ -37,14 +47,17 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 use tiny_skia::Pixmap;
 use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalPosition, LogicalSize};
+use winit::dpi::{LogicalPosition, LogicalSize, Size};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy, OwnedDisplayHandle};
 use winit::keyboard::{Key, NamedKey, PhysicalKey};
 use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
-use winit::platform::wayland::{EventLoopExtWayland, WindowAttributesExtWayland};
+use winit::platform::startup_notify::WindowAttributesExtStartupNotify;
+use winit::platform::wayland::{
+    ActiveEventLoopExtWayland, EventLoopExtWayland, WindowAttributesExtWayland,
+};
 use winit::platform::x11::WindowAttributesExtX11;
-use winit::window::{CursorIcon, Window, WindowAttributes, WindowId};
+use winit::window::{ActivationToken, CursorIcon, Window, WindowAttributes, WindowId};
 
 /// A window rather than KMS: a desktop session is there (`WAYLAND_DISPLAY`
 /// or `DISPLAY`), and neither `EXACT_DRM` nor `EXACT_VNC`, which are the KMS
@@ -56,7 +69,11 @@ pub(super) fn wanted() -> bool {
 
 /// The window loop: open the window, boot at its size and scale, run the
 /// display loop over it. Exit code.
-pub(super) fn run<D: DataSource + Default>(config: &mut Config, started: Instant) -> i32 {
+pub(super) fn run<D: DataSource + Default>(
+    config: &mut Config,
+    started: Instant,
+    opening: crate::Window,
+) -> i32 {
     let name = exact_painted::frames::app_name();
     let id = D::default().app_id().to_owned();
     let size = if std::env::var_os("EXACT_SIZE").is_some() {
@@ -65,14 +82,33 @@ pub(super) fn run<D: DataSource + Default>(config: &mut Config, started: Instant
         (1024., 720.)
     };
     let class = if id.is_empty() { &name } else { &id };
-    let mut surface = match Surface::open(&name, class, size) {
+    let keep_running = opening.keep_running;
+    // The token the launcher gave this launch, for its window (or the
+    // running instance's) and for no process this one starts.
+    let token = keep_running.then(launch_token).flatten();
+    let instance = match keep_running.then(|| super::instance::path(class)).flatten() {
+        None => None,
+        Some(path) => match super::instance::claim(&path, token.as_deref()) {
+            Ok(Claim::First(instance)) => Some(instance),
+            Ok(Claim::Handed) => return 0,
+            Ok(Claim::Busy) => {
+                eprintln!("exact: {name} is running and did not answer; this launch ends");
+                return 1;
+            }
+            Err(e) => {
+                eprintln!("exact: {}: {e}; this launch runs alone", path.display());
+                None
+            }
+        },
+    };
+    let mut surface = match Surface::open(&name, class, size, keep_running, token) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("exact: no window: {e}");
             return 1;
         }
     };
-    let window = surface.window.clone();
+    let window = surface.handler.window().expect("opened");
     let scale = window.scale_factor();
     let pixels = window.inner_size();
     let viewport = (
@@ -80,9 +116,18 @@ pub(super) fn run<D: DataSource + Default>(config: &mut Config, started: Instant
         pixels.height as f32 / scale as f32,
     );
     config.scale = scale as f32;
-    let Some((p, marks)) = super::boot::<D>(config, started, viewport) else {
+    let Some((mut p, marks)) = super::boot::<D>(config, started, viewport) else {
         return 1;
     };
+    // The app's bare `focus()` and `hideWindow()`, carried to winit's next
+    // turn, since the presenter asks them from inside its own.
+    let proxy = surface.event_loop.create_proxy();
+    if keep_running {
+        let focus = proxy.clone();
+        p.set_window_focuser(move || drop(focus.send_event(Ask::Show(None))));
+        let hide = proxy.clone();
+        p.set_window_hider(move || drop(hide.send_event(Ask::Hide)));
+    }
     println!(
         "exact: window {}x{} on {}, scale {scale}, boot {:.1} ms",
         pixels.width,
@@ -95,7 +140,9 @@ pub(super) fn run<D: DataSource + Default>(config: &mut Config, started: Instant
         started.elapsed().as_secs_f64() * 1000.0
     );
     let mut events = Events {
-        window,
+        window: Some(window),
+        proxy,
+        instance,
         queue: surface.handler.queue.clone(),
         clock_set: super::clock_set::ClockSet::open(),
         scale,
@@ -120,62 +167,189 @@ pub(super) fn run<D: DataSource + Default>(config: &mut Config, started: Instant
     )
 }
 
-/// winit's side of the loop: makes the window when the loop starts, and
-/// keeps what it reports for the next turn.
-#[derive(Default)]
+/// The launcher's activation token (Wayland's `XDG_ACTIVATION_TOKEN`, X11's
+/// `DESKTOP_STARTUP_ID`), taken out of the environment.
+fn launch_token() -> Option<String> {
+    let token = ["XDG_ACTIVATION_TOKEN", "DESKTOP_STARTUP_ID"]
+        .into_iter()
+        .find_map(|name| std::env::var(name).ok().filter(|t| !t.is_empty()));
+    winit::platform::startup_notify::reset_activation_token_env();
+    token
+}
+
+/// What the app or a later launch asks of the window, at winit's next turn.
+enum Ask {
+    /// Show the window, raised with a launch's activation token if it has one.
+    Show(Option<String>),
+    /// Put the window away.
+    Hide,
+}
+
+/// What the window did, for the presenter's side of the loop.
+enum Note {
+    Event(WindowEvent),
+    /// A window was made: the first, or one shown again.
+    Shown(Rc<Window>),
+    /// The window was put away.
+    Hidden,
+}
+
+/// The window and the buffer its frames are copied into.
+struct Shown {
+    buffer: softbuffer::Surface<OwnedDisplayHandle, Rc<Window>>,
+    window: Rc<Window>,
+}
+
+/// winit's side of the loop: makes the window when the loop starts (and
+/// again when it shows after being put away), and keeps what it reports for
+/// the next turn.
 struct Handler {
-    attributes: Option<WindowAttributes>,
-    window: Option<Rc<Window>>,
+    /// What every window of the app is made with; `size` is the last one's.
+    attributes: WindowAttributes,
+    size: Size,
+    context: softbuffer::Context<OwnedDisplayHandle>,
+    shown: Option<Shown>,
+    keep_running: bool,
+    /// This launch's activation token, for the first window.
+    token: Option<String>,
     error: Option<String>,
-    queue: Rc<RefCell<VecDeque<WindowEvent>>>,
+    queue: Rc<RefCell<VecDeque<Note>>>,
     /// The compositor asked for a frame since the last submit.
     redraw: bool,
 }
 
-impl ApplicationHandler for Handler {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if let Some(attributes) = self.attributes.take() {
-            match event_loop.create_window(attributes) {
-                Ok(window) => self.window = Some(Rc::new(window)),
-                Err(e) => self.error = Some(e.to_string()),
+impl Handler {
+    fn window(&self) -> Option<Rc<Window>> {
+        self.shown.as_ref().map(|s| s.window.clone())
+    }
+
+    /// A new window at the last size, raised with `token`; one that is
+    /// showing is replaced.
+    fn make(&mut self, event_loop: &ActiveEventLoop, token: Option<String>) {
+        self.shown = None;
+        let mut attributes = self.attributes.clone().with_inner_size(self.size);
+        if let Some(token) = token {
+            attributes = attributes.with_activation_token(ActivationToken::from_raw(token));
+        }
+        let made = event_loop
+            .create_window(attributes)
+            .map_err(|e| e.to_string())
+            .and_then(|window| {
+                let window = Rc::new(window);
+                softbuffer::Surface::new(&self.context, window.clone())
+                    .map(|buffer| Shown { buffer, window })
+                    .map_err(|e| e.to_string())
+            });
+        match made {
+            Ok(shown) => {
+                let window = shown.window.clone();
+                self.shown = Some(shown);
+                // The new window takes a frame now; one a replaced window
+                // held is done with.
+                self.redraw = true;
+                self.queue.borrow_mut().push_back(Note::Shown(window));
             }
+            Err(e) => self.error = Some(e),
         }
     }
 
-    fn window_event(&mut self, _: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+    /// The app's `focus()` or a later launch. A window that is showing is
+    /// raised: on X11 by asking, and on Wayland, where winit's
+    /// `focus_window` does nothing, by a new window that carries the
+    /// launch's token, which is how the compositor lets a window come forward.
+    fn show(&mut self, event_loop: &ActiveEventLoop, token: Option<String>) {
+        if let Some(shown) = &self.shown {
+            if token.is_none() || !event_loop.is_wayland() {
+                shown.window.focus_window();
+                return;
+            }
+        }
+        self.make(event_loop, token);
+    }
+
+    /// The window put away, remembering its size.
+    fn hide(&mut self) {
+        let Some(shown) = self.shown.take() else {
+            return;
+        };
+        let window = &shown.window;
+        self.size = window
+            .inner_size()
+            .to_logical::<f64>(window.scale_factor())
+            .into();
+        self.redraw = false;
+        self.queue.borrow_mut().push_back(Note::Hidden);
+    }
+}
+
+impl ApplicationHandler<Ask> for Handler {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.shown.is_none() && self.error.is_none() {
+            let token = self.token.take();
+            self.make(event_loop, token);
+        }
+    }
+
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, ask: Ask) {
+        match ask {
+            Ask::Show(token) => self.show(event_loop, token),
+            Ask::Hide => self.hide(),
+        }
+    }
+
+    fn window_event(&mut self, _: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        // What a window put away (or replaced) still reports is no one's.
+        if self.shown.as_ref().is_none_or(|s| s.window.id() != id) {
+            return;
+        }
         match event {
             WindowEvent::RedrawRequested => self.redraw = true,
-            event => self.queue.borrow_mut().push_back(event),
+            // As the Windows host: nothing unloads, so nothing is asked.
+            WindowEvent::CloseRequested if self.keep_running => self.hide(),
+            event => self.queue.borrow_mut().push_back(Note::Event(event)),
         }
     }
 }
 
 /// The window as the loop's output.
 struct Surface {
-    event_loop: EventLoop<()>,
+    event_loop: EventLoop<Ask>,
     handler: Handler,
-    window: Rc<Window>,
-    buffer: softbuffer::Surface<Rc<Window>, Rc<Window>>,
     /// The frame shown, until the compositor's frame callback releases it.
     pending: Option<SubmittedFrame>,
 }
 
 impl Surface {
-    fn open(title: &str, class: &str, (width, height): (f32, f32)) -> Result<Surface, String> {
-        let mut event_loop = EventLoop::new().map_err(|e| e.to_string())?;
-        let attributes = Window::default_attributes()
-            .with_title(title)
-            .with_inner_size(LogicalSize::new(width, height));
+    fn open(
+        title: &str,
+        class: &str,
+        (width, height): (f32, f32),
+        keep_running: bool,
+        token: Option<String>,
+    ) -> Result<Surface, String> {
+        let mut event_loop = EventLoop::with_user_event()
+            .build()
+            .map_err(|e| e.to_string())?;
+        let context = softbuffer::Context::new(event_loop.owned_display_handle())
+            .map_err(|e| e.to_string())?;
+        let attributes = Window::default_attributes().with_title(title);
         // The Wayland app id and the X11 WM_CLASS, which docks match to a
         // desktop file: `<app id>.desktop`, as the build writes it.
         let attributes = WindowAttributesExtWayland::with_name(attributes, class, title);
         let attributes = WindowAttributesExtX11::with_name(attributes, class, title);
         let mut handler = Handler {
-            attributes: Some(attributes),
-            ..Default::default()
+            attributes,
+            size: LogicalSize::new(width, height).into(),
+            context,
+            shown: None,
+            keep_running,
+            token,
+            error: None,
+            queue: Rc::default(),
+            redraw: false,
         };
         // The loop's first iteration resumes it, which makes the window.
-        while handler.window.is_none() && handler.error.is_none() {
+        while handler.shown.is_none() && handler.error.is_none() {
             if let PumpStatus::Exit(code) =
                 event_loop.pump_app_events(Some(Duration::ZERO), &mut handler)
             {
@@ -185,22 +359,17 @@ impl Surface {
         if let Some(e) = handler.error.take() {
             return Err(e);
         }
-        let window = handler.window.clone().expect("checked");
-        let context = softbuffer::Context::new(window.clone()).map_err(|e| e.to_string())?;
-        let buffer =
-            softbuffer::Surface::new(&context, window.clone()).map_err(|e| e.to_string())?;
         Ok(Surface {
             event_loop,
             handler,
-            window,
-            buffer,
             pending: None,
         })
     }
 
     fn millihertz(&self) -> u32 {
-        self.window
-            .current_monitor()
+        self.handler
+            .window()
+            .and_then(|w| w.current_monitor())
             .and_then(|m| m.refresh_rate_millihertz())
             .filter(|mhz| *mhz > 0)
             .unwrap_or(60_000)
@@ -214,8 +383,10 @@ impl Output for Surface {
     fn period_ms(&self) -> f64 {
         1e6 / f64::from(self.millihertz())
     }
+    /// No window takes a frame while it is put away: the loop paints
+    /// nothing and runs no animation frames until it shows.
     fn pending(&self) -> bool {
-        self.pending.is_some()
+        self.pending.is_some() || self.handler.shown.is_none()
     }
     fn sequence(&self) -> Option<u32> {
         None
@@ -235,24 +406,28 @@ impl Output for Surface {
         ) else {
             return Ok(Some(frame));
         };
+        let Some(shown) = &mut self.handler.shown else {
+            return Ok(Some(frame));
+        };
         // The buffer is the frame's size: a fractional scale's rounding can
         // differ from the window's by a pixel, which the compositor scales.
-        self.buffer
+        shown
+            .buffer
             .resize(width, height)
             .map_err(|e| format!("window buffer: {e}"))?;
-        let mut buffer = self
+        let mut buffer = shown
             .buffer
             .buffer_mut()
             .map_err(|e| format!("window buffer: {e}"))?;
         copy_xrgb(pixels, &mut buffer);
         // Ask for the compositor's frame callback in the commit that shows
         // this frame; `RedrawRequested` reports it.
-        self.window.pre_present_notify();
-        self.handler.redraw = false;
+        shown.window.pre_present_notify();
         buffer
             .present()
             .map_err(|e| format!("window present: {e}"))?;
-        self.window.request_redraw();
+        shown.window.request_redraw();
+        self.handler.redraw = false;
         self.pending = Some(frame);
         Ok(None)
     }
@@ -267,11 +442,14 @@ impl Output for Surface {
         if let Some(e) = self.handler.error.take() {
             return Err(e);
         }
-        Ok(if std::mem::take(&mut self.handler.redraw) {
-            self.pending.take()
-        } else {
-            None
-        })
+        // A frame shown in a window since put away is done with.
+        Ok(
+            if std::mem::take(&mut self.handler.redraw) || self.handler.shown.is_none() {
+                self.pending.take()
+            } else {
+                None
+            },
+        )
     }
 }
 
@@ -285,8 +463,12 @@ fn copy_xrgb(frame: &Pixmap, out: &mut [u32]) {
 
 /// The window's input, fed to the presenter each turn.
 struct Events {
-    window: Rc<Window>,
-    queue: Rc<RefCell<VecDeque<WindowEvent>>>,
+    /// `None` while the window is put away.
+    window: Option<Rc<Window>>,
+    proxy: EventLoopProxy<Ask>,
+    /// This app's one process, listening for later launches.
+    instance: Option<super::instance::Instance>,
+    queue: Rc<RefCell<VecDeque<Note>>>,
     clock_set: Option<super::clock_set::ClockSet>,
     /// Device pixels per point, as the compositor says.
     scale: f64,
@@ -319,6 +501,68 @@ const MODIFIERS: [&str; 8] = [
 ];
 
 impl Events {
+    fn note<D: DataSource>(&mut self, p: &mut Presenter<D>, note: Note, now: f64) {
+        match note {
+            Note::Event(event) => self.event(p, event, now),
+            Note::Shown(window) => {
+                let returning = self.window.replace(window).is_none();
+                self.cursor = CursorIcon::Default;
+                self.cursor_stale = true;
+                self.ime = InputMethod::default();
+                self.resized(p);
+                if returning {
+                    // A page put away comes back (`pageshow` with `persisted`).
+                    tell_page(p, |page| {
+                        page.hidden = false;
+                        if std::mem::take(&mut page.persisted) {
+                            page.restores = page.restores.wrapping_add(1);
+                        }
+                    });
+                    p.surface_lifecycle(false, !self.focused);
+                }
+                p.repaint();
+            }
+            Note::Hidden => {
+                self.window = None;
+                self.pointer = None;
+                self.ime = InputMethod::default();
+                self.focused = false;
+                p.set_window_active(false);
+                self.let_go(p, now);
+                tell_page(p, |page| {
+                    page.hidden = true;
+                    page.persisted = true;
+                });
+                p.surface_lifecycle(true, true);
+            }
+        }
+    }
+
+    /// The window lost the keyboard, or went: held buttons and keys let go.
+    fn let_go<D: DataSource>(&mut self, p: &mut Presenter<D>, now: f64) {
+        self.buttons = 0;
+        self.clicks = Clicks::default();
+        let _ = p.pointer_lost(now);
+        for code in MODIFIERS {
+            p.hold_modifier(code, false);
+        }
+    }
+
+    fn resized<D: DataSource>(&mut self, p: &mut Presenter<D>) {
+        let Some(window) = &self.window else {
+            return;
+        };
+        let size = window.inner_size();
+        if size.width == 0 || size.height == 0 {
+            return;
+        }
+        self.scale = window.scale_factor();
+        let s = self.scale as f32;
+        if let Some(e) = p.resize_scaled(size.width as f32 / s, size.height as f32 / s, s) {
+            eprintln!("exact: resize: {e}");
+        }
+    }
+
     fn event<D: DataSource>(&mut self, p: &mut Presenter<D>, event: WindowEvent, now: f64) {
         match event {
             // As the Windows host: `beforeunload` can keep the window open;
@@ -330,28 +574,13 @@ impl Events {
                     self.closed = true;
                 }
             }
-            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
-                let size = self.window.inner_size();
-                if size.width == 0 || size.height == 0 {
-                    return;
-                }
-                self.scale = self.window.scale_factor();
-                let s = self.scale as f32;
-                if let Some(e) = p.resize_scaled(size.width as f32 / s, size.height as f32 / s, s) {
-                    eprintln!("exact: resize: {e}");
-                }
-            }
+            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => self.resized(p),
             WindowEvent::Focused(focused) => {
                 self.focused = focused;
                 p.set_window_active(focused);
                 p.surface_lifecycle(false, !focused);
                 if !focused {
-                    self.buttons = 0;
-                    self.clicks = Clicks::default();
-                    let _ = p.pointer_lost(now);
-                    for code in MODIFIERS {
-                        p.hold_modifier(code, false);
-                    }
+                    self.let_go(p, now);
                 }
             }
             WindowEvent::Occluded(occluded) => p.surface_lifecycle(occluded, !self.focused),
@@ -438,7 +667,10 @@ impl Events {
 
 impl<D: DataSource> event_loop::Events<D> for Events {
     fn fds(&self) -> Vec<i32> {
-        self.clock_set.iter().map(|set| set.fd()).collect()
+        let clock_set = self.clock_set.iter().map(|set| set.fd());
+        clock_set
+            .chain(self.instance.iter().map(|i| i.fd()))
+            .collect()
     }
     fn idle(&self) -> bool {
         false
@@ -449,12 +681,19 @@ impl<D: DataSource> event_loop::Events<D> for Events {
     fn turn(&mut self, p: &mut Presenter<D>, wall: impl Fn() -> f64) {
         loop {
             // The queue's borrow ends before the event is handled.
-            let Some(event) = self.queue.borrow_mut().pop_front() else {
+            let Some(note) = self.queue.borrow_mut().pop_front() else {
                 break;
             };
-            self.event(p, event, wall());
+            self.note(p, note, wall());
         }
-        self.ime.sync(&self.window, p);
+        // A later launch shows the window, raised with its token.
+        for token in self.instance.iter().flat_map(|i| i.take()) {
+            let _ = self.proxy.send_event(Ask::Show(token));
+        }
+        let Some(window) = &self.window else {
+            return;
+        };
+        self.ime.sync(window, p);
         if std::mem::take(&mut self.cursor_stale) {
             // A CSS cursor keyword is winit's cursor name (cursor-icon parses
             // CSS's); `auto` and `none` show the default arrow.
@@ -463,7 +702,7 @@ impl<D: DataSource> event_loop::Events<D> for Events {
                 .and_then(|(x, y)| p.cursor_at(x, y).name().parse().ok())
                 .unwrap_or_default();
             if cursor != self.cursor {
-                self.window.set_cursor(cursor);
+                window.set_cursor(cursor);
                 self.cursor = cursor;
             }
         }
@@ -476,6 +715,15 @@ impl<D: DataSource> event_loop::Events<D> for Events {
     }
     fn closed(&self) -> bool {
         self.closed
+    }
+}
+
+/// The page's visibility as the window has it: put away, or shown again.
+fn tell_page<D: DataSource>(p: &mut Presenter<D>, change: impl FnOnce(&mut exact_runner::Page)) {
+    let mut page = p.host().runner().page();
+    change(&mut page);
+    if let Some(error) = p.set_page(page) {
+        eprintln!("exact: page: {error}");
     }
 }
 

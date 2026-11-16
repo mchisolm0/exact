@@ -214,10 +214,10 @@ impl<D: DataSource> Presenter<D> {
                 name @ ("exitFullscreen" | "setWindowOpacity") => self
                     .host
                     .log(format!("{name} refused: the window's full screen and opacity are on the Mac host only")),
-                // A window put away with the app still running is the Mac's and
-                // Windows' (`set_window_hider`, LLP 1133.025 D4).
+                // A window put away with the app still running is the Mac's,
+                // Windows' and Linux's (`set_window_hider`, LLP 1133.025 D4).
                 "hideWindow" => self.host.log(
-                    "hideWindow refused: a window that hides while the app keeps running is on the Mac and Windows hosts only",
+                    "hideWindow refused: a window that hides while the app keeps running is on the Mac, Windows and Linux (host.linux.window.keepRunning) hosts only",
                 ),
                 // A page zoom is the Mac's so far (LLP 1021 §5.3.1).
                 "setPageZoom" => self
