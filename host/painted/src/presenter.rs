@@ -928,6 +928,9 @@ impl<D: DataSource> Presenter<D> {
     /// stale.
     pub(crate) fn after_commit(&mut self) -> Option<String> {
         self.dirty |= self.brush.paint_epoch != Some(self.host.kernel().epoch());
+        // A commit that changed only a canvas's arguments moves no node, but
+        // the canvas owes a drawing, which the next frame runs.
+        self.dirty |= self.host.runner().canvas_owed(&|_| true);
         self.finish_commit()
     }
 

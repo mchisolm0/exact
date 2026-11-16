@@ -889,7 +889,7 @@ export const classifications = [
       "Painter::new Painter::paint Painter::replace_backend Painter::retiring_text_residency Painter::take_notes rgba text_spec"],
     ["painted:host/painted/src/paint/backend.rs", "Painter::trim WindowLayer::into_pixels"],
     ["painted:host/painted/src/paint/border.rs", "border_fills border_fills_styled PathOp::points pattern_fills reduced rounded_rect shape_path Shape::within shaped_rect"],
-    ["painted:host/painted/src/paint/damage.rs", "Changes::clear Changes::commit Changes::layout Changes::repaint Painter::damage_rects Painter::paragraph"],
+    ["painted:host/painted/src/paint/damage.rs", "Changes::clear Changes::commit Changes::layout Changes::node Changes::repaint Painter::damage_rects Painter::paragraph"],
     ["painted:host/painted/src/paint/dialog_shadow.rs", "DialogShadow::matches DialogShadow::new DialogShadow::rect"],
     ["painted:host/painted/src/paint/field.rs", "effective_overflow"],
     ["painted:host/painted/src/paint/look.rs", "page_color"],
