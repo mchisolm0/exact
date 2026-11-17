@@ -2957,6 +2957,10 @@ the virtual clock).
   icon and likewise leaves the page: a left click or a keyboard
   selection runs `press`, or opens the menu when there is none, and a right
   click opens the menu, which ends with Exit unless `status-quit` is removed.
+  On Linux the first such button is a StatusNotifierItem in the bar's tray
+  when the session has one: a click runs `press`, and its menu, ending with
+  Exit as on Windows, is the tray's own (dbusmenu), so a row is its text, its
+  checkmark and its submenu. With no tray it stays in the window.
   Every other host keeps the button an ordinary button in the window. With
   `host.macos.activationPolicy: "accessory"` the app has no Dock tile and
   opens no window at launch. Bare `focus()` is the window's, as the web's
