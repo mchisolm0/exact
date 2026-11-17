@@ -563,7 +563,10 @@ public final class ExactSession {
         // handles this session decodes.
         if let measure = SurfacesLink.installed?.canvasTextMeasure { runtime.setCanvasText(measure) }
         presenter.canvas2d.textEngine = { [weak self] in self?.text }
-        presenter.canvas2d.assetBytes = { [weak app] in app?.assetBytes($0) }
+        // An `app:/` handle is a file the app wrote (a photo to annotate), read as an `image` node reads it.
+        presenter.canvas2d.assetBytes = { [weak app] src in
+            src.hasPrefix("app:/") ? AppFiles.open(src).flatMap { try? $0.readToEnd() } : app?.assetBytes(src)
+        }
         presenter.canvas2d.onImage = { [weak self] src, image in
             guard let self, self.state != .destroyed else { return }
             self.apply(self.runtime.canvasImage(src, width: image?.width ?? 0, height: image?.height ?? 0, ok: image != nil))
