@@ -301,7 +301,14 @@ fn chosen_documents_outlast_the_launch_in_a_desktop_session() {
     let read = |path: &str| exact_data::documents::resolve(path, 0).map(drop);
     match phase.to_str().unwrap() {
         "choose" => {
+            let before = std::fs::read_to_string(root.join(STORE)).unwrap_or(EMPTY.into());
             let folder = chosen(0, &root.join("notes")).unwrap();
+            // GNOME's chooser then writes the store again from what it read
+            // before the choice, without this app's mark: the choice stays.
+            std::fs::write(root.join(STORE), &before).unwrap();
+            recheck(0);
+            assert_eq!(listed(), [&*folder]);
+            assert_eq!(super::recents().unwrap().held(), [root.join("notes")]);
             let file = chosen(0, &root.join("file.md")).unwrap();
             let other = chosen(0, &root.join("other.md")).unwrap();
             assert_eq!(listed(), [&*other, &*file, &*folder]);

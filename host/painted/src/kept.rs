@@ -17,11 +17,22 @@
 use exact_data::documents::kept::{self, Identity};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// The store's name in `$XDG_DATA_HOME`.
 const STORE: &str = "recently-used.xbel";
 const BOOKMARK_NS: &str = "http://www.freedesktop.org/standards/desktop-bookmarks";
 const MIME_NS: &str = "http://www.freedesktop.org/standards/shared-mime-info";
+
+/// How long after a choice the desktop's chooser may still write its own
+/// entry for it. GNOME's (Nautilus, through xdg-desktop-portal-gnome)
+/// rewrites the store from what it read before the choice, within a second,
+/// and so takes this app's mark off what was just chosen.
+const SETTLING: Duration = Duration::from_secs(10);
+
+/// What this process chose, and when: a mark gone within [`SETTLING`] of
+/// its choice is the chooser's rewrite, not the person clearing it.
+static CHOICES: Mutex<Vec<(PathBuf, Instant)>> = Mutex::new(Vec::new());
 
 /// The recent-files store this process notes its app's documents in, once
 /// a session of an app that keeps documents has activated.
@@ -117,16 +128,36 @@ pub(crate) fn chosen(owner: u64, real: &Path) -> Option<String> {
     let doc = kept::keep(owner, real, "", "readwrite")?;
     // A choice the store did not take is not held, and so not kept.
     let _ = recents.note(real);
+    let mut choices = CHOICES.lock().unwrap_or_else(|e| e.into_inner());
+    choices.push((real.to_path_buf(), Instant::now()));
+    drop(choices);
     recheck(owner);
     Some(doc)
 }
 
 /// The recent-files store changed (or may have): drop what it no longer
-/// holds, as when the person cleared the desktop's recent history.
+/// holds, as when the person cleared the desktop's recent history. A
+/// choice still settling whose mark went is marked again instead.
 pub(crate) fn recheck(owner: u64) {
-    if let Some(recents) = recents() {
-        kept::held(owner, &recents.held());
+    let Some(recents) = recents() else {
+        return;
+    };
+    let mut held = recents.held();
+    let unmarked: Vec<PathBuf> = {
+        let mut choices = CHOICES.lock().unwrap_or_else(|e| e.into_inner());
+        choices.retain(|(_, at)| at.elapsed() < SETTLING);
+        (choices.iter())
+            .filter(|(path, _)| !held.contains(path))
+            .map(|(path, _)| path.clone())
+            .collect()
+    };
+    if !unmarked.is_empty() {
+        for path in &unmarked {
+            let _ = recents.note(path);
+        }
+        held = recents.held();
     }
+    kept::held(owner, &held);
 }
 
 /// The folder the store is in, for the document watch's inotify (a writer
