@@ -1,7 +1,8 @@
 //! The Linux desktop's hot-key table (LLP 1133.025 D11 item 2) for
 //! `@exact/global-shortcuts`: the GlobalShortcuts portal
 //! (<https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html>),
-//! which GNOME 48 and later and KDE Plasma answer. The desktop owns the
+//! which GNOME 48 and later, KDE Plasma and Hyprland answer (Hyprland
+//! through `super::hyprland`). The desktop owns the
 //! chord: the first time an app binds one it shows its own dialog, and
 //! remembers the answer by the app's id, so the app registers that id first
 //! (`org.freedesktop.host.portal.Registry`); GNOME needs a `<id>.desktop`
@@ -282,17 +283,26 @@ fn work(shared: Shared, app_id: String) {
         if wanted.is_empty() {
             continue;
         }
-        let answer = bind(&wanted, &app_id);
+        let answer = bind(&wanted, &app_id).map(|(bus, session, bound)| {
+            let chords = (wanted.iter())
+                .filter(|b| bound.contains(&b.portal_id()))
+                .map(|b| (b.trigger.clone(), b.portal_id()))
+                .collect();
+            let taken = super::hyprland::bind(chords, &app_id);
+            (bus, session, bound, taken)
+        });
         let mut table = lock(&shared);
         if table.changes != bound_at {
             continue;
         }
         let (bus, session) = match answer {
-            Ok((bus, session, bound)) => {
+            Ok((bus, session, bound, taken)) => {
                 for b in &mut table.bindings {
-                    b.state = match bound.contains(&b.portal_id()) {
-                        true => State::Bound,
-                        false => State::Refused("not-allowed"),
+                    let id = b.portal_id();
+                    b.state = match (bound.contains(&id), taken.contains(&id)) {
+                        (true, false) => State::Bound,
+                        (true, true) => State::Refused("in-use"),
+                        (false, _) => State::Refused("not-allowed"),
                     };
                 }
                 (Some(bus), session)
