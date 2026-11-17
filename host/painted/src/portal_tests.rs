@@ -944,3 +944,15 @@ fn the_element_hears_what_the_portal_answered() {
         journal(&p)
     );
 }
+
+#[test]
+fn color_scheme_prefers_dark_only_at_one() {
+    use super::appearance::dark;
+    let wrapped = |v: Value| Value::Variant(Box::new(v));
+    assert_eq!(dark(&wrapped(Value::U32(1))), Some(true));
+    assert_eq!(dark(&wrapped(Value::U32(2))), Some(false));
+    assert_eq!(dark(&wrapped(Value::U32(0))), Some(false));
+    // The older `Read` puts the variant inside another.
+    assert_eq!(dark(&wrapped(wrapped(Value::U32(1)))), Some(true));
+    assert_eq!(dark(&wrapped(Value::str("dark"))), None);
+}

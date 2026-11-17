@@ -89,6 +89,8 @@ mod placement;
 // The Linux desktop portal; Windows uses its window's common item dialogs.
 #[cfg_attr(any(not(unix), target_os = "android"), allow(dead_code))]
 mod portal;
+#[cfg(target_os = "linux")]
+pub use portal::appearance;
 pub mod presence_secrets;
 pub mod presenter;
 pub mod raster;

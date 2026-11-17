@@ -128,6 +128,12 @@ pub(super) fn run<D: DataSource + Default>(
         let hide = proxy.clone();
         p.set_window_hider(move || drop(hide.send_event(Ask::Hide)));
     }
+    let scheme = proxy.clone();
+    if let Some(dark) =
+        exact_painted::appearance::watch(move |dark| drop(scheme.send_event(Ask::Scheme(dark))))
+    {
+        p.set_system_scheme(dark);
+    }
     println!(
         "exact: window {}x{} on {}, scale {scale}, boot {:.1} ms",
         pixels.width,
@@ -183,6 +189,8 @@ enum Ask {
     Show(Option<String>),
     /// Put the window away.
     Hide,
+    /// The desktop's light or dark preference changed (dark: `true`).
+    Scheme(bool),
 }
 
 /// What the window did, for the presenter's side of the loop.
@@ -192,6 +200,8 @@ enum Note {
     Shown(Rc<Window>),
     /// The window was put away.
     Hidden,
+    /// The desktop's light or dark preference changed (dark: `true`).
+    Scheme(bool),
 }
 
 /// The window and the buffer its frames are copied into.
@@ -294,6 +304,7 @@ impl ApplicationHandler<Ask> for Handler {
         match ask {
             Ask::Show(token) => self.show(event_loop, token),
             Ask::Hide => self.hide(),
+            Ask::Scheme(dark) => self.queue.borrow_mut().push_back(Note::Scheme(dark)),
         }
     }
 
@@ -535,6 +546,7 @@ impl Events {
                 });
                 p.surface_lifecycle(true, true);
             }
+            Note::Scheme(dark) => p.set_system_scheme(dark),
         }
     }
 
