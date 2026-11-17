@@ -91,12 +91,24 @@ pub fn run_composed<D: DataSource + Default>(
 }
 
 /// The desktop window the app opens in, as `host.linux.window` gives it.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct Window {
     /// The person's close puts the window away and the app keeps running;
     /// a later launch or a bare `focus()` shows it again
     /// (`host.linux.window.keepRunning`).
     pub keep_running: bool,
+    /// The first window's size in logical pixels
+    /// (`host.linux.window.width`, `height`).
+    pub size: (f32, f32),
+}
+
+impl Default for Window {
+    fn default() -> Self {
+        Window {
+            keep_running: false,
+            size: (1024.0, 720.0),
+        }
+    }
 }
 
 /// [`run_composed`] in the window `app.json` describes.

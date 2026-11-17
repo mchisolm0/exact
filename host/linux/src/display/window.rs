@@ -79,7 +79,7 @@ pub(super) fn run<D: DataSource + Default>(
     let size = if std::env::var_os("EXACT_SIZE").is_some() {
         config.size
     } else {
-        (1024., 720.)
+        opening.size
     };
     let class = if id.is_empty() { &name } else { &id };
     let keep_running = opening.keep_running;

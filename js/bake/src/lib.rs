@@ -342,6 +342,10 @@ fn build_sources(
             "/// Whether closing the window keeps the app running (`host.linux.window.keepRunning`).\n#[allow(dead_code)]\npub const KEEP_RUNNING: bool = {};\n",
             manifest.linux_keep_running()?
         ));
+        let (width, height) = manifest.linux_window_size()?;
+        metadata.push_str(&format!(
+            "/// The window's first size (`host.linux.window.width`, `height`).\n#[allow(dead_code)]\npub const WINDOW_SIZE: (f32, f32) = ({width:?}, {height:?});\n"
+        ));
     }
     // The module's Canvas 2D roster (LLP 1056 D1), known before it loads; a
     // linked bake's is in its compat.json, as its identity is.

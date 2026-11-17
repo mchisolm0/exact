@@ -318,6 +318,22 @@ impl Manifest {
         }
     }
 
+    /// `host.linux.window.width` and `height`: the window's first size in
+    /// logical pixels, 1024 by 720 for either one absent.
+    pub fn linux_window_size(&self) -> Result<(f32, f32), String> {
+        let linux = self.host("linux");
+        let window = linux.get("window");
+        let side = |key: &str, default: f32| match window.and_then(|w| w.get(key)) {
+            None => Ok(default),
+            Some(value) => value
+                .as_f64()
+                .filter(|n| (1.0..=16384.0).contains(n))
+                .map(|n| n as f32)
+                .ok_or_else(|| format!("host.linux.window.{key} is a number from 1 to 16384")),
+        };
+        Ok((side("width", 1024.0)?, side("height", 720.0)?))
+    }
+
     /// `deploy.signing.keys`: canonical base64 of 32 raw Ed25519 bytes.
     /// Missing keys remain absent; malformed configured keys are refused.
     pub fn keys(&self) -> Result<serde_json::Value, String> {
@@ -1020,6 +1036,21 @@ mod windows_tests {
         let wrong =
             manifest(serde_json::json!({"host": {"windows": {"window": {"keepRunning": 1}}}}));
         assert!(wrong.windows_window().unwrap_err().contains("keepRunning"));
+    }
+
+    #[test]
+    fn a_linux_window_opens_at_the_size_app_json_gives() {
+        let sized = manifest(
+            serde_json::json!({"host": {"linux": {"window": {"width": 420, "height": 560}}}}),
+        );
+        assert_eq!(sized.linux_window_size(), Ok((420.0, 560.0)));
+        let half = manifest(serde_json::json!({"host": {"linux": {"window": {"width": 420}}}}));
+        assert_eq!(half.linux_window_size(), Ok((420.0, 720.0)));
+        let wrong = manifest(serde_json::json!({"host": {"linux": {"window": {"height": 0}}}}));
+        assert!(wrong
+            .linux_window_size()
+            .unwrap_err()
+            .contains("window.height"));
     }
 
     #[test]
