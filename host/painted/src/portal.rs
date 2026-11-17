@@ -315,6 +315,8 @@ mod bus;
 pub(crate) mod shortcuts;
 #[cfg(any(target_os = "linux", all(test, unix)))]
 mod hyprland;
+#[cfg(any(target_os = "linux", all(test, unix)))]
+pub mod tray;
 #[cfg(unix)]
 pub(crate) use bus::choose;
 

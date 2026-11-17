@@ -212,6 +212,39 @@ fn a_status_menu_ends_with_exit_when_its_host_asks() {
 }
 
 #[test]
+fn a_host_drawn_status_menu_is_rows_its_choice_presses() {
+    let mut p = boot(TRAY);
+    let tray = named(&p, "tray");
+    let row = |node, label: &str, enabled, checked| StatusEntry::Row {
+        node,
+        label: label.into(),
+        enabled,
+        checked,
+        children: Vec::new(),
+    };
+    let (open, toggle, off) = (named(&p, "open"), named(&p, "toggle"), named(&p, "off"));
+    assert_eq!(
+        p.status_menu_entries(tray, true),
+        [
+            row(open, "Open Snap", true, None),
+            row(toggle, "Start at Login", true, Some(false)),
+            StatusEntry::Separator,
+            row(off, "Unavailable", false, None),
+            StatusEntry::Separator,
+            row(EXIT, "Exit", true, None),
+        ]
+    );
+    let plain = named(&p, "plain");
+    assert_eq!(p.status_menu_entries(plain, false), []);
+    let now = p.host.now();
+    p.status_choose(open, now);
+    p.status_choose(off, now);
+    assert_eq!(slot(&p, "log"), exact_plan::Value::from("open "));
+    p.status_choose(EXIT, now);
+    assert!(p.take_status_exit());
+}
+
+#[test]
 fn a_status_buttons_press_runs_without_a_menu() {
     let mut p = boot(TRAY);
     let plain = named(&p, "plain");

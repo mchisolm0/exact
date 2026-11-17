@@ -38,6 +38,7 @@ mod clock_set;
 mod flip;
 mod instance;
 mod pointer;
+mod tray;
 mod window;
 use flip::FlipState;
 #[cfg(test)]

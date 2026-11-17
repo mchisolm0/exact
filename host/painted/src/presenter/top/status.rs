@@ -14,6 +14,11 @@
 //! ends with a separator and Exit (D7), unless the root's
 //! `-exact-menu-remove` names `status-quit`; Exit closes the menu and
 //! leaves the rest to the host ([`Presenter::take_status_exit`]).
+//!
+//! A host whose desktop draws the menu itself (Linux's tray, which no
+//! Wayland window can be placed beside) reads it as rows instead
+//! ([`Presenter::status_menu_entries`]) and hands back the row chosen
+//! ([`Presenter::status_choose`]).
 use super::*;
 
 /// The node an Exit row stands for: none of the tree's.
@@ -62,6 +67,32 @@ pub struct StatusMenu {
     /// Its size, points.
     pub size: (f32, f32),
 }
+
+/// A row of a status menu as a host's own menu shows it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StatusEntry {
+    /// A row the person can choose: its button (or [`EXIT`]).
+    Row {
+        /// The row's button, which [`Presenter::status_choose`] presses.
+        node: ViewId,
+        /// What it says.
+        label: String,
+        /// Not `disabled`.
+        enabled: bool,
+        /// A `menuitemcheckbox` or `menuitemradio`'s `aria-checked`.
+        checked: Option<bool>,
+        /// The submenu it opens.
+        children: Vec<StatusEntry>,
+    },
+    /// A line between groups.
+    Separator,
+    /// A group's title.
+    Header(String),
+}
+
+/// How deep a host-drawn status menu's submenus go, so a menu that opens
+/// itself ends.
+const DEPTH: usize = 8;
 
 impl<D: DataSource> Presenter<D> {
     /// This host places status items: each status button leaves the page.
@@ -142,6 +173,91 @@ impl<D: DataSource> Presenter<D> {
                 Some(Plan::Menu(entries))
             }
             plan => plan,
+        }
+    }
+
+    /// Status button `id`'s menu as rows, its submenus within (none with no
+    /// menu), ending with Exit when `exit` (D7).
+    pub fn status_menu_entries(&self, id: ViewId, exit: bool) -> Vec<StatusEntry> {
+        let root = (self.status_popover(id))
+            .and_then(|key| self.host.kernel().node_by_key(key))
+            .map(|node| node.id);
+        let mut entries = root.map_or_else(Vec::new, |root| self.status_entries(root, DEPTH));
+        if exit && !self.status_quit_removed() {
+            if !entries.is_empty() {
+                entries.push(StatusEntry::Separator);
+            }
+            entries.push(StatusEntry::Row {
+                node: EXIT,
+                label: "Exit".into(),
+                enabled: true,
+                checked: None,
+                children: Vec::new(),
+            });
+        }
+        entries
+    }
+
+    /// Menu popover `pop`'s rows, to `depth` submenus down.
+    fn status_entries(&self, pop: ViewId, depth: usize) -> Vec<StatusEntry> {
+        let kernel = self.host.kernel();
+        let Some(Plan::Menu(entries)) = self.surface_plan(pop, false) else {
+            return Vec::new();
+        };
+        let entry = |entry: Entry| match entry {
+            Entry::Separator => StatusEntry::Separator,
+            Entry::Header(title, ..) => StatusEntry::Header(title),
+            Entry::Item(row) => {
+                let node = kernel.node(row.node);
+                let role = node
+                    .as_ref()
+                    .and_then(|n| n.props.str(PropId::AccessibilityRole));
+                let checks = matches!(role, Some("menuitemcheckbox" | "menuitemradio"));
+                let submenu = (row.opens.and_then(|key| kernel.node_by_key(key)))
+                    .filter(|_| depth > 0)
+                    .filter(|sub| matches!(self.surface_plan(sub.id, false), Some(Plan::Menu(_))));
+                StatusEntry::Row {
+                    node: row.node,
+                    label: row.title,
+                    enabled: row.enabled,
+                    checked: checks.then_some(row.checked),
+                    children: submenu
+                        .map_or_else(Vec::new, |sub| self.status_entries(sub.id, depth - 1)),
+                }
+            }
+        };
+        entries.into_iter().map(entry).collect()
+    }
+
+    /// The person chose `row` of a host-drawn status menu: Exit, or its
+    /// button's `press`, as a row of the painted menu runs it.
+    pub fn status_choose(&mut self, row: ViewId, now_ms: f64) {
+        if row == EXIT {
+            self.top.exited = true;
+            return;
+        }
+        let enabled = self
+            .host
+            .kernel()
+            .node(row)
+            .is_some_and(|n| n.props.bool(PropId::Disabled) != Some(true));
+        if !enabled
+            || !self
+                .host
+                .runner()
+                .handlers_of(row)
+                .contains(&EventKind::Press)
+        {
+            return;
+        }
+        let press = Event::pressed(exact_runner::MouseEvent {
+            client_x: 0.,
+            client_y: 0.,
+            held: self.modifiers(),
+        });
+        let error = self.host.dispatch_at(row, press, now_ms);
+        if let Some(e) = error.or(self.after_commit()) {
+            self.host.log(e);
         }
     }
 

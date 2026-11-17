@@ -56,7 +56,7 @@ mod status;
 pub use look::Target;
 use look::{Inputs, Layout};
 pub use shape::{Entry, Plan, Row};
-pub use status::{StatusItem, StatusMenu, EXIT};
+pub use status::{StatusEntry, StatusItem, StatusMenu, EXIT};
 
 /// What a shell's windows are drawn from: it records what `paint` draws
 /// for a surface of `size` points at `scale` pixels a point, and returns

@@ -160,6 +160,27 @@ impl Bus {
             .map(drop)
     }
 
+    /// The next message to this connection (a call to an object it
+    /// serves, a signal, another's reply), or why none will come.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) fn next(&mut self) -> Result<Message, String> {
+        match self.queued.pop_front() {
+            Some(m) => Ok(m),
+            None => self.message(),
+        }
+    }
+
+    /// What sends on this connection from any thread once its calls are
+    /// done: answers to calls, and signals.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) fn sender(&self) -> Result<Sender, String> {
+        Ok(Sender {
+            stream: std::sync::Mutex::new(self.stream.try_clone().map_err(|e| e.to_string())?),
+            // Past any serial this connection's own calls will reach.
+            serial: std::sync::atomic::AtomicU32::new(1 << 24),
+        })
+    }
+
     /// The next signal, or why none will come.
     pub(crate) fn signal(&mut self) -> Result<Message, String> {
         if let Some(m) = self.queued.pop_front() {
@@ -171,6 +192,92 @@ impl Bus {
                 return Ok(m);
             }
         }
+    }
+}
+
+/// Writes to a [`Bus`]'s connection, shared by the thread that reads it and
+/// any other: each message is written whole.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) struct Sender {
+    stream: std::sync::Mutex<UnixStream>,
+    serial: std::sync::atomic::AtomicU32,
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+impl Sender {
+    fn serial(&self) -> u32 {
+        self.serial
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn send(&self, bytes: &[u8]) {
+        if let Ok(mut stream) = self.stream.lock() {
+            let _ = stream.write_all(bytes);
+        }
+    }
+
+    /// Answer `call` with `body`.
+    pub(crate) fn reply(&self, call: &Message, body: &[Value]) {
+        let m = wire::message(
+            wire::METHOD_RETURN,
+            self.serial(),
+            Some(call.serial),
+            &call.sender,
+            "",
+            "",
+            "",
+            body,
+        );
+        self.send(&m);
+    }
+
+    /// Answer `call` with the error `name`.
+    pub(crate) fn error(&self, call: &Message, name: &str, text: &str) {
+        self.send(&wire::error(
+            self.serial(),
+            call.serial,
+            &call.sender,
+            name,
+            text,
+        ));
+    }
+
+    /// Emit `member` of `interface` from the object at `path`.
+    pub(crate) fn signal(&self, path: &str, interface: &str, member: &str, body: &[Value]) {
+        let m = wire::message(
+            wire::SIGNAL,
+            self.serial(),
+            None,
+            "",
+            path,
+            interface,
+            member,
+            body,
+        );
+        self.send(&m);
+    }
+
+    /// Call `member` without waiting: its reply, if any, is read as any
+    /// other message.
+    pub(crate) fn call(
+        &self,
+        destination: &str,
+        path: &str,
+        interface: &str,
+        member: &str,
+        body: &[Value],
+    ) {
+        let m = wire::message(
+            wire::METHOD_CALL,
+            self.serial(),
+            None,
+            destination,
+            path,
+            interface,
+            member,
+            body,
+        );
+        self.send(&m);
     }
 }
 

@@ -1,16 +1,18 @@
-//! The D-Bus wire format, as much as a portal call needs: little-endian
+//! The D-Bus wire format, as much as a portal call and a tray item need: little-endian
 //! messages whose bodies hold any complete type, read and written by
 //! signature (the [D-Bus Specification](https://dbus.freedesktop.org/doc/dbus-specification.html),
 //! "Type System" and "Message Protocol"). Unix file descriptors are never
 //! sent or taken.
 
 /// A value of any D-Bus type. Integers other than `y` and `u` are read as
-/// [`Value::Num`] and never written.
+/// [`Value::Num`]; of them, only [`Value::I32`] is written.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Value {
     Byte(u8),
     Bool(bool),
     U32(u32),
+    /// An `i`, as a tray menu's ids are written.
+    I32(i32),
     Num(i64),
     F64(f64),
     Str(String),
@@ -62,6 +64,7 @@ impl Value {
             Value::Byte(_) => "y".into(),
             Value::Bool(_) => "b".into(),
             Value::U32(_) => "u".into(),
+            Value::I32(_) => "i".into(),
             Value::Num(_) => "x".into(),
             Value::F64(_) => "d".into(),
             Value::Str(_) => "s".into(),
@@ -111,6 +114,10 @@ pub(crate) fn write(buf: &mut Vec<u8>, v: &Value) {
             buf.extend_from_slice(&u32::from(*b).to_le_bytes());
         }
         Value::U32(n) => {
+            pad(buf, 4);
+            buf.extend_from_slice(&n.to_le_bytes());
+        }
+        Value::I32(n) => {
             pad(buf, 4);
             buf.extend_from_slice(&n.to_le_bytes());
         }
@@ -328,6 +335,45 @@ pub(crate) fn message(
     member: &str,
     body: &[Value],
 ) -> Vec<u8> {
+    encode(
+        kind,
+        serial,
+        reply_serial,
+        destination,
+        [path, interface, member, ""],
+        body,
+    )
+}
+
+/// An error named `name` answering `call` (serial `reply_serial` from
+/// `destination`), with `text` its message.
+pub(crate) fn error(
+    serial: u32,
+    reply_serial: u32,
+    destination: &str,
+    name: &str,
+    text: &str,
+) -> Vec<u8> {
+    encode(
+        ERROR,
+        serial,
+        Some(reply_serial),
+        destination,
+        ["", "", "", name],
+        &[Value::str(text)],
+    )
+}
+
+/// A message with its header's path, interface, member and error name
+/// (each left out when empty).
+fn encode(
+    kind: u8,
+    serial: u32,
+    reply_serial: Option<u32>,
+    destination: &str,
+    [path, interface, member, error_name]: [&str; 4],
+    body: &[Value],
+) -> Vec<u8> {
     let mut encoded = Vec::new();
     for v in body {
         write(&mut encoded, v);
@@ -343,6 +389,9 @@ pub(crate) fn message(
     }
     if !member.is_empty() {
         fields.push(field(3, Value::str(member)));
+    }
+    if !error_name.is_empty() {
+        fields.push(field(4, Value::str(error_name)));
     }
     if let Some(n) = reply_serial {
         fields.push(field(5, Value::U32(n)));

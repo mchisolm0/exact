@@ -91,6 +91,8 @@ mod placement;
 mod portal;
 #[cfg(target_os = "linux")]
 pub use portal::appearance;
+#[cfg(target_os = "linux")]
+pub use portal::tray;
 pub mod presence_secrets;
 pub mod presenter;
 pub mod raster;

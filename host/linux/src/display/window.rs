@@ -129,11 +129,13 @@ pub(super) fn run<D: DataSource + Default>(
         p.set_window_hider(move || drop(hide.send_event(Ask::Hide)));
     }
     let scheme = proxy.clone();
-    if let Some(dark) =
-        exact_painted::appearance::watch(move |dark| drop(scheme.send_event(Ask::Scheme(dark))))
-    {
+    let desktop_dark =
+        exact_painted::appearance::watch(move |dark| drop(scheme.send_event(Ask::Scheme(dark))));
+    if let Some(dark) = desktop_dark {
         p.set_system_scheme(dark);
     }
+    let wake = proxy.clone();
+    let tray = super::tray::Tray::start(&mut p, class, move || drop(wake.send_event(Ask::Tray)));
     println!(
         "exact: window {}x{} on {}, scale {scale}, boot {:.1} ms",
         pixels.width,
@@ -160,6 +162,8 @@ pub(super) fn run<D: DataSource + Default>(
         cursor: CursorIcon::Default,
         cursor_stale: true,
         ime: InputMethod::default(),
+        tray,
+        desktop_dark: desktop_dark.unwrap_or(false),
         closed: false,
     };
     event_loop::run(
@@ -191,6 +195,8 @@ enum Ask {
     Hide,
     /// The desktop's light or dark preference changed (dark: `true`).
     Scheme(bool),
+    /// The tray heard the person: the turn takes it.
+    Tray,
 }
 
 /// What the window did, for the presenter's side of the loop.
@@ -305,6 +311,7 @@ impl ApplicationHandler<Ask> for Handler {
             Ask::Show(token) => self.show(event_loop, token),
             Ask::Hide => self.hide(),
             Ask::Scheme(dark) => self.queue.borrow_mut().push_back(Note::Scheme(dark)),
+            Ask::Tray => {}
         }
     }
 
@@ -495,6 +502,10 @@ struct Events {
     /// The cursor may have changed: the pointer moved or a frame landed.
     cursor_stale: bool,
     ime: InputMethod,
+    /// The app's status item, when the session has a tray.
+    tray: Option<super::tray::Tray>,
+    /// The desktop's dark preference, which the bar's icons follow.
+    desktop_dark: bool,
     closed: bool,
 }
 
@@ -546,7 +557,20 @@ impl Events {
                 });
                 p.surface_lifecycle(true, true);
             }
-            Note::Scheme(dark) => p.set_system_scheme(dark),
+            Note::Scheme(dark) => {
+                self.desktop_dark = dark;
+                p.set_system_scheme(dark);
+            }
+        }
+    }
+
+    /// The app ends, as the person's close of a window that does not hide:
+    /// `beforeunload` can keep it; otherwise the hatches and packages end.
+    fn quit<D: DataSource>(&mut self, p: &mut Presenter<D>, now: f64) {
+        if p.before_unload(now) {
+            p.end_hatches();
+            p.end_packages();
+            self.closed = true;
         }
     }
 
@@ -577,15 +601,8 @@ impl Events {
 
     fn event<D: DataSource>(&mut self, p: &mut Presenter<D>, event: WindowEvent, now: f64) {
         match event {
-            // As the Windows host: `beforeunload` can keep the window open;
-            // otherwise the hatches and the packages end with it.
-            WindowEvent::CloseRequested => {
-                if p.before_unload(now) {
-                    p.end_hatches();
-                    p.end_packages();
-                    self.closed = true;
-                }
-            }
+            // As the Windows host.
+            WindowEvent::CloseRequested => self.quit(p, now),
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => self.resized(p),
             WindowEvent::Focused(focused) => {
                 self.focused = focused;
@@ -701,6 +718,12 @@ impl<D: DataSource> event_loop::Events<D> for Events {
         // A later launch shows the window, raised with its token.
         for token in self.instance.iter().flat_map(|i| i.take()) {
             let _ = self.proxy.send_event(Ask::Show(token));
+        }
+        let hidden = self.window.is_none();
+        let exit =
+            (self.tray.as_mut()).is_some_and(|t| t.turn(p, self.desktop_dark, hidden, wall()));
+        if exit {
+            self.quit(p, wall());
         }
         let Some(window) = &self.window else {
             return;
