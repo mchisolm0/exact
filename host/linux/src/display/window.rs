@@ -154,6 +154,12 @@ pub(super) fn run<D: DataSource + Default>(
     // Before any frame, so the compositor never maps the window.
     if hidden {
         surface.handler.hide();
+        // A hidden window takes no present, so a frame painted to pixels is
+        // the launch's first pixel, which starts the data module and timers;
+        // `turn` asks again while the module activates. The loop is woken so
+        // the tray shows the item at once.
+        p.first_pixel_unshown();
+        let _ = proxy.send_event(Ask::Tray);
     }
     let mut events = Events {
         window: (!hidden).then_some(window),
@@ -733,6 +739,9 @@ impl<D: DataSource> event_loop::Events<D> for Events {
             let _ = self.proxy.send_event(Ask::Show(token));
         }
         let hidden = self.window.is_none();
+        if hidden {
+            p.first_pixel_unshown();
+        }
         let exit =
             (self.tray.as_mut()).is_some_and(|t| t.turn(p, self.desktop_dark, hidden, wall()));
         if exit {
