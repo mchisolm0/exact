@@ -22,8 +22,9 @@ final class StatusItemHost: NSObject {
     private struct Weak { weak var host: StatusItemHost? }
     /// The placed items, by the button's id.
     private(set) var items: [UInt32: NSStatusItem] = [:]
-    /// The image each item was given from: a sync runs after every batch.
-    private var images: [UInt32: NSImage?] = [:]
+    /// What each item's image was made from (an `NSImage`, or an `svg`'s
+    /// picture): a sync runs after every batch.
+    private var images: [UInt32: AnyObject?] = [:]
     private var saidUnplaced = false
     /// The session has ended: the next oldest places its own.
     private(set) var ended = false
@@ -111,11 +112,17 @@ final class StatusItemHost: NSObject {
         node.isHidden = true
         guard let button = item.button else { return }
         button.tag = Int(node.id)
-        let label = presenter.menus.title(of: node)
+        let label = node.props["accessibilityLabel"].flatMap { $0.isEmpty ? nil : $0 } ?? presenter.menus.title(of: node)
         let image = presenter.menus.image(of: node)
-        if images[node.id] != .some(image) {
-            images[node.id] = .some(image)
+        // An `svg` is drawn as authored at the bar's scale, again only when
+        // its scene changes.
+        let scale = button.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        let picture = image == nil ? MenuHost.first("svg", in: node).flatMap { presenter.svg.picture($0.id, scale: scale) } : nil
+        let source: AnyObject? = image ?? picture
+        if images[node.id].map({ $0 !== source }) ?? true {
+            images[node.id] = .some(source)
             let template = image?.copy() as? NSImage
+                ?? picture.map { NSImage(cgImage: $0, size: NSSize(width: CGFloat($0.width) / scale, height: CGFloat($0.height) / scale)) }
             // The menu bar tints a template image (D7, Apple's HIG).
             template?.isTemplate = true
             if let template, template.size.height > 18 {

@@ -725,6 +725,8 @@ final class SvgHost {
     /// scene is applied, so an appearance change applies it again
     /// (minesweeper F11, paint F10).
     private var payloads: [UInt32: [String: Any]] = [:]
+    /// Each view's last `picture`, until its next scene.
+    private var pictures: [UInt32: (scale: CGFloat, image: CGImage)] = [:]
     /// The session's fonts, for SVG text: set by the presenter.
     var fonts: SvgText.Fonts?
     private var boxSpecs: [UInt32: (layer: CALayer, specs: [CssAnimation])] = [:]
@@ -746,10 +748,25 @@ final class SvgHost {
         scene.tint = tint
         let spec = payload["scene"] as? [String: Any] ?? [:]
         payloads[id] = spec
+        pictures[id] = nil
         scene.apply(spec, dark: dark, clock: clock)
         if let view = layer.delegate as? NodeView { place(id, in: view.contentBox()) }
         scene.root.applyColorRange(limit: limit, deep: true)
         (layer.delegate as? NodeView)?.overflowClipGeometryChanged()
+    }
+
+    /// `id`'s content box as a bitmap, `scale` pixels per point, first row
+    /// at the top. It is drawn from the last scene rather than the layers,
+    /// so a hidden view (a placed status item's button) draws too.
+    func picture(_ id: UInt32, scale: CGFloat) -> CGImage? {
+        if let kept = pictures[id], kept.scale == scale { return kept.image }
+        let spec = payloads[id], box = nums(spec?["box"])
+        guard let spec, box.count == 4, let t = affine(spec["t"]) else { return nil }
+        let rect = CGRect(x: 0, y: 0, width: box[2], height: box[3])
+        guard let image = SvgIsland.render(spec["els"] as? [Any] ?? [], rect: rect, w: Int((rect.width * scale).rounded()), h: Int((rect.height * scale).rounded()),
+                                           k: scale, transform: t, flip: true, dark: false, fonts: fonts)?.makeImage() else { return nil }
+        pictures[id] = (scale, image)
+        return image
     }
 
     /// Places `id`'s scene at its view's content box, which a sheet may hold:
@@ -843,6 +860,7 @@ final class SvgHost {
     func forget(_ id: UInt32) {
         if let scene = scenes.removeValue(forKey: id) { scene.reset(); scene.root.removeFromSuperlayer() }
         payloads.removeValue(forKey: id)
+        pictures.removeValue(forKey: id)
         if let entry = boxSpecs.removeValue(forKey: id) { CssAnimations.apply([], to: entry.layer, clock: nil, installed: &boxInstalled[id, default: [:]]) }
         boxInstalled.removeValue(forKey: id)
         hiddenBoxes.remove(id)

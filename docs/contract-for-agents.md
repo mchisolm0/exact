@@ -4774,8 +4774,9 @@ id, or alone, also files the button in the app's Dock menu:
 bar item on macOS, a notification-area icon on Windows. Its text or
 `aria-label` is the item's title and tooltip, one `img` or `svg` child its
 image, and its `popovertarget` menu the item's menu. On macOS the image is
-a template. On Windows a `symbol:` uses the taskbar's text colour, an `svg`
-is drawn as authored, and a file-backed `img` is contained at the current
+a template, and an `svg` is drawn as authored, again each time it changes.
+On Windows a `symbol:` uses the taskbar's text colour, an `svg` is drawn as
+authored, and a file-backed `img` is contained at the current
 display's small-icon size and reloaded when its DPI changes. The app's icon
 is the fallback when the image is absent, still loading or fails to load.
 On macOS a click opens that menu, or

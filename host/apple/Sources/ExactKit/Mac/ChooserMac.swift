@@ -183,7 +183,7 @@ extension MenuHost {
     func image(of row: NodeView) -> NSImage? {
         guard row.isButton else { return nil }
         if let symbol = row.face?.symbol { return FaceSymbol.image(symbol) }
-        guard !row.isNativeButton, let img = Self.firstImage(in: row) else { return nil }
+        guard !row.isNativeButton, let img = Self.first("image", in: row) else { return nil }
         if img.imageSource?.hasPrefix("symbol:") == true { return img.image }
         return img.raster.map { Self.rowImage($0.image.image) }
     }
@@ -193,10 +193,11 @@ extension MenuHost {
         let scale = min(side / max(natural.width, 1), side / max(natural.height, 1))
         return NSImage(cgImage: bitmap, size: NSSize(width: natural.width * scale, height: natural.height * scale))
     }
-    private static func firstImage(in row: NodeView) -> NodeView? {
+    /// The first view of `kind` in `row`, depth first.
+    static func first(_ kind: String, in row: NodeView) -> NodeView? {
         for case let node as NodeView in row.container.subviews {
-            if node.kind == "image" { return node }
-            if let found = firstImage(in: node) { return found }
+            if node.kind == kind { return node }
+            if let found = first(kind, in: node) { return found }
         }
         return nil
     }

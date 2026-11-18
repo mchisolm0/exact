@@ -708,6 +708,34 @@ final class HeaderMacTests: XCTestCase {
         XCTAssertNotEqual(names[0], names[1])
     }
 
+    /// A status button whose picture is an `svg` shows it drawn upright as
+    /// the item's template image, drawn again only when its scene changes,
+    /// with its `aria-label` as the tooltip.
+    func testAnSvgStatusButtonIsDrawnAsItsImage() throws {
+        // A 16-point svg (170) painted over its top half, then its top quarter.
+        func scene(_ bottom: Int) -> [String: Any] {
+            let shape: [String: Any] = ["id": 1, "n": 1, "o": 1, "p": [0, 0, 0, 1, 16, 0, 1, 16, bottom, 1, 0, bottom, 3], "f": [0, 0, 0, 255]]
+            return ["op": "svg", "id": 170, "scene": ["box": [0, 0, 16, 16], "t": [1, 0, 0, 1, 0, 0], "els": [shape]]]
+        }
+        let p = fixture(extra: view(17, "button", ["menuPlacement": "status", "accessibilityLabel": "Meter"], press: true)
+            + [["op": "create", "id": 170, "kind": "svg", "props": [:], "handlers": []], ["op": "frame", "id": 170, "x": 0, "y": 0, "w": 16, "h": 16],
+               children(17, [170]), children(15, [17]), scene(8)])
+        defer { p.statusItems.reset() }
+        let button = try XCTUnwrap(p.statusItems.items[17]?.button)
+        let image = try XCTUnwrap(button.image)
+        XCTAssertTrue(image.isTemplate)
+        XCTAssertEqual(image.size, NSSize(width: 16, height: 16))
+        XCTAssertEqual(button.title, "")
+        XCTAssertEqual(button.toolTip, "Meter")
+        let bitmap = NSBitmapImageRep(cgImage: try XCTUnwrap(image.cgImage(forProposedRect: nil, context: nil, hints: nil)))
+        XCTAssertEqual(bitmap.colorAt(x: 2, y: 2)?.alphaComponent ?? 0, 1, accuracy: 0.01, "the top half is painted")
+        XCTAssertEqual(bitmap.colorAt(x: 2, y: bitmap.pixelsHigh - 2)?.alphaComponent ?? 1, 0, accuracy: 0.01, "the bottom half is not")
+        p.apply(wireBatch([["op": "props", "id": 17, "set": ["testId": "meter"]]]))
+        XCTAssertTrue(button.image === image, "an unchanged scene is not drawn again")
+        p.apply(wireBatch([scene(4)]))
+        XCTAssertFalse(button.image === image, "a changed scene is")
+    }
+
     /// A header's button that opens a menu is AppKit's menu item: the menu
     /// is the item's own to pop up, filled from the popover's rows as it
     /// opens, after the button's own press; a chosen row presses its
