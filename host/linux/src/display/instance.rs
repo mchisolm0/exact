@@ -37,14 +37,18 @@ pub(crate) fn path(app: &str) -> Option<PathBuf> {
 }
 
 /// Listen at `path`, or hand `token` (the launch's activation token) to the
-/// instance already listening there.
-pub(crate) fn claim(path: &Path, token: Option<&str>) -> std::io::Result<Claim> {
+/// instance already listening there, which shows its window; unless `show`
+/// is false, which leaves it as it is.
+pub(crate) fn claim(path: &Path, token: Option<&str>, show: bool) -> std::io::Result<Claim> {
     match UnixListener::bind(path) {
         Ok(listener) => return Instance::listening(listener, path),
         Err(e) if e.kind() != ErrorKind::AddrInUse => return Err(e),
         Err(_) => {}
     }
     match UnixStream::connect(path) {
+        // A hidden launch leaves the running instance as it is: it connects
+        // and says nothing.
+        Ok(_) if !show => Ok(Claim::Handed),
         Ok(stream) => Ok(hand(stream, token)),
         Err(e) if e.kind() == ErrorKind::ConnectionRefused => {
             std::fs::remove_file(path)?;
@@ -91,7 +95,11 @@ impl Instance {
             let _ = stream.set_nonblocking(false);
             let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
             let mut line = String::new();
-            if BufReader::new(&stream).read_line(&mut line).is_err() {
+            // A launch that ends without its line asks for nothing.
+            if !BufReader::new(&stream)
+                .read_line(&mut line)
+                .is_ok_and(|n| n > 0)
+            {
                 continue;
             }
             let _ = (&stream).write_all(b"1");
@@ -128,13 +136,14 @@ mod tests {
     #[test]
     fn a_later_launch_hands_its_token_to_the_running_instance() {
         let path = socket("handoff");
-        let running = first(claim(&path, None));
+        let running = first(claim(&path, None, true));
         let later = {
             let path = path.clone();
             std::thread::spawn(move || {
-                let tokenless = claim(&path, None).unwrap();
-                let tokened = claim(&path, Some("gnome-shell/Glint/1234")).unwrap();
-                [tokenless, tokened].map(|c| matches!(c, Claim::Handed))
+                let tokenless = claim(&path, None, true).unwrap();
+                let hidden = claim(&path, None, false).unwrap();
+                let tokened = claim(&path, Some("gnome-shell/Glint/1234"), true).unwrap();
+                [tokenless, hidden, tokened].map(|c| matches!(c, Claim::Handed))
             })
         };
         let mut launches = Vec::new();
@@ -143,7 +152,8 @@ mod tests {
             launches.extend(running.take());
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert_eq!(later.join().unwrap(), [true, true]);
+        assert_eq!(later.join().unwrap(), [true, true, true]);
+        // The hidden launch asked for nothing.
         assert_eq!(launches, [None, Some("gnome-shell/Glint/1234".to_owned())]);
         drop(running);
         assert!(!path.exists(), "the socket goes with its instance");
@@ -155,7 +165,7 @@ mod tests {
         // A listener dropped without its file, as a killed process leaves it.
         drop(UnixListener::bind(&path).unwrap());
         assert!(path.exists());
-        let instance = first(claim(&path, Some("token")));
+        let instance = first(claim(&path, Some("token"), true));
         assert!(instance.take().is_empty());
     }
 }

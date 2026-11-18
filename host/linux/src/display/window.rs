@@ -30,7 +30,10 @@
 //! and timers run on; the loop paints nothing while there is no window. A
 //! later launch of the app (`instance`) or a bare `focus()` makes the window
 //! again at its last size, with the launch's activation token, so the
-//! compositor raises it; `hideWindow()` puts it away.
+//! compositor raises it; `hideWindow()` puts it away. Launched with
+//! `--login hidden`, as a Windows login item's hidden launch is (LLP
+//! 1133.025 D6), it puts the window away before its first frame, so the
+//! app starts in the tray with no window shown.
 
 use super::event_loop::{self, Output};
 use super::instance::Claim;
@@ -86,9 +89,10 @@ pub(super) fn run<D: DataSource + Default>(
     // The token the launcher gave this launch, for its window (or the
     // running instance's) and for no process this one starts.
     let token = keep_running.then(launch_token).flatten();
+    let hidden = keep_running && launched_hidden(std::env::args().skip(1));
     let instance = match keep_running.then(|| super::instance::path(class)).flatten() {
         None => None,
-        Some(path) => match super::instance::claim(&path, token.as_deref()) {
+        Some(path) => match super::instance::claim(&path, token.as_deref(), !hidden) {
             Ok(Claim::First(instance)) => Some(instance),
             Ok(Claim::Handed) => return 0,
             Ok(Claim::Busy) => {
@@ -147,8 +151,12 @@ pub(super) fn run<D: DataSource + Default>(
         },
         started.elapsed().as_secs_f64() * 1000.0
     );
+    // Before any frame, so the compositor never maps the window.
+    if hidden {
+        surface.handler.hide();
+    }
     let mut events = Events {
-        window: Some(window),
+        window: (!hidden).then_some(window),
         proxy,
         instance,
         queue: surface.handler.queue.clone(),
@@ -175,6 +183,11 @@ pub(super) fn run<D: DataSource + Default>(
         marks,
         D::default,
     )
+}
+
+/// Whether the command line is a hidden login launch: `--login hidden`.
+fn launched_hidden(mut args: impl Iterator<Item = String>) -> bool {
+    args.any(|arg| arg == "--login") && args.next().as_deref() == Some("hidden")
 }
 
 /// The launcher's activation token (Wayland's `XDG_ACTIVATION_TOKEN`, X11's
@@ -900,6 +913,15 @@ mod tests {
     use super::*;
     use exact_painted::presenter::PainterChoice;
     use winit::keyboard::{KeyCode, NativeKeyCode};
+
+    #[test]
+    fn only_a_hidden_login_launch_starts_without_its_window() {
+        let hidden = |args: &[&str]| launched_hidden(args.iter().map(|a| a.to_string()));
+        assert!(hidden(&["--login", "hidden"]));
+        assert!(!hidden(&["--login"]));
+        assert!(!hidden(&["hidden"]));
+        assert!(!hidden(&[]));
+    }
 
     #[test]
     fn winit_keys_take_the_dom_names() {
