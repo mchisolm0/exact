@@ -289,7 +289,7 @@ impl SvgState {
             .filter(|(id, (_, bx))| {
                 kernel
                     .node(**id)
-                    .is_some_and(|n| content_box(kernel, &n) != *bx)
+                    .is_some_and(|n| scene_box(kernel, &n) != *bx)
             })
             .map(|(id, _)| *id)
             .collect();
@@ -301,7 +301,7 @@ impl SvgState {
                 self.sent.remove(&root);
                 continue;
             };
-            let bx = content_box(kernel, &node);
+            let bx = scene_box(kernel, &node);
             #[cfg(test)]
             {
                 self.scene_builds += 1;
@@ -416,6 +416,25 @@ impl SvgState {
         }
         notes
     }
+}
+
+/// The box `node`'s scene draws in: its content box, or, in a status item's
+/// button, which lays out as nothing while the host places it in the menu
+/// bar, the bar's 16-point icon square, as the painted hosts draw a status
+/// icon (LLP 1133.025 D4).
+fn scene_box(kernel: &Kernel, node: &NodeRef<'_>) -> (f32, f32, f32, f32) {
+    let bx = content_box(kernel, node);
+    if bx.2 > 0.0 && bx.3 > 0.0 {
+        return bx;
+    }
+    let mut at = node.parent;
+    while let Some(n) = at.and_then(|id| kernel.node(id)) {
+        if exact_runner::desktop::presents(n.props, "status") {
+            return (0.0, 0.0, 16.0, 16.0);
+        }
+        at = n.parent;
+    }
+    bx
 }
 
 /// An SVG file's scene as the `svg` op carries one (LLP 1011.001 D4): no

@@ -1006,3 +1006,28 @@ component App
         assert_eq!(batch["motion"], !played, "{clip}");
     }
 }
+
+/// LLP 1133.025 D4: a status item's button lays out as nothing while the
+/// Mac host places it; its `svg` is still drawn, in the bar's icon square,
+/// as its data changes.
+#[test]
+fn a_placed_status_items_svg_keeps_an_icon_box() {
+    let app = "component A\n  state full = false\n  action fill\n    full = true\n  view\n    column\n      button testId=\"go\" press=fill\n        text \"go\"\n      button testId=\"status\" -exact-menu=\"status\" aria-label=\"Meter\"\n        svg width=16 height=16 viewBox=\"0 0 16 16\"\n          rect width=(full ? 16 : 8) height=16 fill=\"currentColor\"\n";
+    let plan = contract::compile(app).unwrap().encode();
+    let (mut host, _) = Host::boot(
+        &plan,
+        NoData,
+        Box::new(MonospaceMeasurer::default()),
+        390.0,
+        844.0,
+    )
+    .unwrap();
+    let [go, status] = ["go", "status"].map(|t| {
+        let k = host.runner.kernel();
+        k.node_by_key(k.find_by_test_id(t)[0]).unwrap().id
+    });
+    host.set_covers(&[(status, Some(exact_kernel::HostCover::Whole))]);
+    let s = scene(&host.dispatch_at(go, exact_runner::Event::Press, 0.0));
+    assert_eq!(s["box"], serde_json::json!([0, 0, 16, 16]), "{s}");
+    assert_eq!(s["els"].as_array().map(Vec::len), Some(1), "{s}");
+}
